@@ -59,6 +59,7 @@ InfoResponse FakeDriver::get_info()
 
 LoadSequenceResponse FakeDriver::load_sequence(const Sequence& sequence)
 {
+  ++loads_;
   update();
   if (running_)
   {
@@ -113,12 +114,7 @@ StatusResponse FakeDriver::get_status()
 {
   if (running_ && failure_ == Failure::ResetDuringShot)
   {
-    // A reset forgets everything: the sequence, the shot and the shot ids.
-    running_ = false;
-    loaded_.reset();
-    next_shot_id_ = 1;
-    last_shot_id_ = 0;
-    worst_lateness_us_ = 0;
+    reset();
   }
   update();
 
@@ -158,6 +154,20 @@ void FakeDriver::set_lateness(uint32_t lateness_us)
 const std::vector<FakeDriver::Latch>& FakeDriver::timeline() const
 {
   return timeline_;
+}
+
+int FakeDriver::loads() const
+{
+  return loads_;
+}
+
+void FakeDriver::reset()
+{
+  running_ = false;
+  loaded_.reset();
+  next_shot_id_ = 1;
+  last_shot_id_ = 0;
+  worst_lateness_us_ = 0;
 }
 
 void FakeDriver::update()

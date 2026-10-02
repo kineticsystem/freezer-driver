@@ -37,6 +37,7 @@
 
 #include <freezer_driver/driver.hpp>
 #include <freezer_driver/sequence.hpp>
+#include <freezer_driver/shot_runner.hpp>
 #include <freezer_msgs/action/shoot.hpp>
 
 #include <rclcpp/rclcpp.hpp>
@@ -48,9 +49,10 @@ namespace freezer_node
  * @brief The ROS2 node of the Freezer board: a Shoot action server.
  *
  * A goal names a sequence of the node parameters, or carries a raw table. The
- * node loads the table into the controller when it is not already there,
- * fires it, and polls the controller until the shot has ended. One shot runs
- * at a time, on a thread that owns the driver.
+ * node checks it, then hands it to a ShotRunner, which loads it into the
+ * controller, fires it and polls the controller until the shot has ended, and
+ * turns what the runner reports into feedback and a result. One shot runs at
+ * a time, on a thread that owns the driver.
  */
 class FreezerNode : public rclcpp::Node
 {
@@ -92,16 +94,10 @@ private:
 
   void execute(const std::shared_ptr<GoalHandle>& goal_handle);
 
-  /** Load the sequence into the controller, unless it is already there. */
-  void load(const freezer_driver::Sequence& sequence);
-
   std::unique_ptr<freezer_driver::Driver> driver_;
+  std::unique_ptr<freezer_driver::ShotRunner> runner_;
   freezer_driver::SequenceLimits limits_;
   bool connected_ = false;
-
-  // What the node believes is loaded in the controller. Reset whenever the
-  // controller may have lost it, so the next shot loads it again.
-  std::optional<uint16_t> loaded_checksum_;
 
   std::atomic<bool> busy_{ false };
 

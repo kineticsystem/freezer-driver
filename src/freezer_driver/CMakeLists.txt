@@ -60,10 +60,12 @@ add_library(
     include/freezer_driver/msgs/status_response.hpp
     include/freezer_driver/recipes.hpp
     include/freezer_driver/sequence.hpp
+    include/freezer_driver/shot_runner.hpp
     src/default_driver.cpp
     src/fake/fake_driver.cpp
     src/recipes.cpp
     src/sequence.cpp
+    src/shot_runner.cpp
 )
 target_include_directories(
     freezer_driver

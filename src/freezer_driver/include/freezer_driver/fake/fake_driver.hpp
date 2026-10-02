@@ -92,6 +92,15 @@ public:
   /** Every pattern latched since the fake was created. */
   const std::vector<Latch>& timeline() const;
 
+  /** How many times a sequence was sent with load_sequence(). */
+  int loads() const;
+
+  /**
+   * Forget everything, as the controller does when it restarts: the
+   * sequence, a running shot and the shot ids.
+   */
+  void reset();
+
 private:
   static std::chrono::microseconds steady_clock();
 
@@ -109,5 +118,6 @@ private:
   uint16_t last_shot_id_ = 0;
   uint32_t worst_lateness_us_ = 0;
   std::vector<Latch> timeline_;
+  int loads_ = 0;
 };
 }  // namespace freezer_driver
