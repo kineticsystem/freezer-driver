@@ -218,7 +218,7 @@ Open a different terminal, attach to the same container with `./docker/dock.sh f
 ros2 action send_goal --feedback /freezer/shoot freezer_msgs/action/Shoot "{}"
 ```
 
-The feedback says `state: 0` while the sequence is loaded into the controller, then `state: 1` with the shot id once the shot has started. The result comes when the controller reports the shot has ended.
+The feedback says `state: 0` while the sequence is loaded into the controller, then `state: 1` with the shot id once the shot has started. The result comes when the controller reports the shot has ended, with the shot id and the time it started. A client can miss the first feedback: ROS2 drops the feedback published before the client has processed the acceptance of its goal. A client that needs to know a shot has started can rely on the result, not on the feedback.
 
 To fire a sequence by name, give it in the goal:
 

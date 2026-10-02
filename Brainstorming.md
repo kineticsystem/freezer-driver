@@ -646,7 +646,7 @@ uint32 hold_us
 
 The hold is a `uint32` in microseconds, not a `builtin_interfaces/Duration`: it is what the controller counts, and a client sees exactly what will run, with no rounding.
 
-**The shot starts with the first `RUNNING` feedback.** That is the ROS2 side of the `ShotResponse`. The status of the goal cannot say it: a goal goes from accepted to executing to succeeded or aborted, and cannot be aborted before it executes, so the goal executes from the start and the feedback tells the two phases apart.
+**The shot starts with the first `RUNNING` feedback.** That is the ROS2 side of the `ShotResponse`. The status of the goal cannot say it: a goal goes from accepted to executing to succeeded or aborted, and cannot be aborted before it executes, so the goal executes from the start and the feedback tells the two phases apart. The feedback is a hint, not a guarantee: ROS2 drops the feedback published before the client has processed the acceptance of its goal, so a fast shot can reach the client with no `LOADING` and without its first `RUNNING`. The result carries the shot id and the time the shot started, whatever feedback arrived.
 
 **The rules of the server:**
 
