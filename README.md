@@ -25,7 +25,7 @@ Freezer Driver is a project to fire cameras and flashes from ROS2, through the F
 - Talk to the Nano with the same framed, CRC-checked protocol as [StepIt Driver](https://github.com/kineticsystem/stepit-driver).
 
 > [!WARNING]
-> The project is being built. The ideas and the decisions taken so far are in [Brainstorming.md](Brainstorming.md). The ROS2 side runs with a fake controller; the firmware answers the handshake only.
+> The project is being built. The ideas and the decisions taken so far are in [Brainstorming.md](Brainstorming.md). The firmware and the ROS2 side fire shots, tested on a Nano on its own; they have not yet driven cameras through the Freezer board.
 
 ## Prerequisites
 
@@ -82,8 +82,7 @@ No udev rule is required. StepIt Driver needs one because the Teensy is programm
 
 We develop the firmware with Visual Studio Code and the [PlatformIO](https://platformio.org) extension, as for StepIt Driver. Installing the Arduino IDE is not required.
 
-> [!WARNING]
-> The firmware answers the handshake, `Info`, and `Echo` only. It does not shoot yet.
+The firmware, version 1.1.0, answers `Info`, `Echo`, `LoadSequence`, `Shoot` and `Status`. Timer1 runs the shot: each step starts at its own time, within about 5 µs, measured on the Nano. A step must last at least 40 µs: shorter steps fall behind, one after the other.
 
 To flash the microcontroller code into the Nano:
 
@@ -236,8 +235,7 @@ To use the Freezer board, set the launch argument `use_fake`:
 ros2 launch freezer_node freezer.launch.py use_fake:=false usb_port:=/dev/ttyUSB0
 ```
 
-> [!WARNING]
-> The firmware 1.0.0 answers the handshake only. With the board, the node connects, then aborts every shot with `The controller refused the sequence: malformed command.` until the firmware implements `LoadSequence`, `Shoot` and `Status`.
+The result of a shot reports `worst_lateness_us`, the latest a step started after its time, as the controller measured it. With firmware 1.1.0 it is about 5 µs.
 
 ### Parameters
 

@@ -42,7 +42,7 @@ using ::testing::Throw;
 
 /**
  * The answer of the firmware to Info, as read from the Nano: version 1.0.0,
- * 16 steps, 20 µs, 10 s and the name.
+ * 16 steps, 40 µs, 10 s and the name.
  */
 std::vector<uint8_t> info_response(const std::string& name = "FREEZER", uint8_t version_major = 1)
 {
@@ -50,7 +50,7 @@ std::vector<uint8_t> info_response(const std::string& name = "FREEZER", uint8_t 
     0x11,                             // status success
     version_major, 0,    0,           // version
     0x10,                             // max steps
-    0x00,          0x00, 0x00, 0x14,  // min hold, 20 µs
+    0x00,          0x00, 0x00, 0x28,  // min hold, 40 µs
     0x00,          0x98, 0x96, 0x80,  // max duration, 10 s
   };
   out.insert(out.end(), name.begin(), name.end());
@@ -79,7 +79,7 @@ TEST_F(TestDefaultDriver, get_info)
   EXPECT_TRUE(response.success());
   EXPECT_EQ(response.version.to_string(), "1.0.0");
   EXPECT_EQ(response.limits.max_steps, 16);
-  EXPECT_EQ(response.limits.min_hold_us, 20u);
+  EXPECT_EQ(response.limits.min_hold_us, 40u);
   EXPECT_EQ(response.limits.max_duration_us, 10'000'000u);
   EXPECT_EQ(response.name, "FREEZER");
 }
