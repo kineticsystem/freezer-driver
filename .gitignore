@@ -1,0 +1,19 @@
+# ROS
+.pio
+build
+install
+log
+.cache
+.mypy_cache
+
+# QtCreator
+*.user
+
+# PyCharm
+venv
+.idea
+*.egg-info
+__pycache__
+
+# The firmware read from the Nano before the first upload: see README.md.
+backup/

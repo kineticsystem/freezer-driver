@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>freezer_driver</name>
+  <version>0.0.0</version>
+  <description>
+    Driver of the Freezer controller: the serial protocol, a fake controller and the shot recipes
+  </description>
+  <maintainer email="g.remigi@kineticsystem.org">Giovanni Remigi</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>framed_serial</depend>
+  <depend>rclcpp</depend>
+
+  <!-- Support for gtest and gmock-based tests in the ament buildsystem in CMake. -->
+  <test_depend>ament_cmake_gmock</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

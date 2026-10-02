@@ -1,0 +1,82 @@
+exclude: \.uxf$|^(build|install|log)/
+
+# To use:
+#
+#     pre-commit run -a
+#
+# Or:
+#
+#     pre-commit install  # (runs every time you commit in git)
+#
+# To update this file:
+#
+#     pre-commit autoupdate
+#
+# See https://github.com/pre-commit/pre-commit
+repos:
+  # Standard hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.3.0
+    hooks:
+      - id: check-added-large-files
+        exclude: \.(stl|dae|png)$
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-yaml
+        args: ["--unsafe"] # Fixes errors parsing custom YAML constructors like ur_description's !degrees
+      - id: debug-statements
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+      - id: fix-byte-order-marker
+
+  - repo: https://github.com/psf/black
+    rev: 22.6.0
+    hooks:
+      - id: black
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.1.0
+    hooks:
+      - id: codespell
+        args: ["--write-changes", "-L", "atleast"] # Provide a comma-separated list of misspelled words that codespell should ignore (for example: '-L', 'word1,word2,word3').
+        exclude: \.(svg|pyc|stl|dae|lock)$
+
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        description: Format files with ClangFormat.
+        entry: clang-format
+        language: system
+        files: ^src/.*\.(c|cc|cxx|cpp|frag|glsl|h|hpp|hxx|ih|ispc|ipp|java|m|proto|vert)$
+        args: ["-fallback-style=none", "-i"]
+
+      # The ament linters of the ROS2 packages. Requires the ROS workspace to
+      # be sourced, e.g. inside the container. freezer_mcu is intentionally
+      # not in the package list below: it's PlatformIO/Arduino firmware, not
+      # a colcon/ament package (no package.xml or CMakeLists.txt).
+      - id: ament_copyright
+        name: ament_copyright
+        description: Check source files for copyright headers.
+        entry: ament_copyright
+        language: system
+        files: ^src/(freezer_driver|freezer_msgs|freezer_node)/.*\.(c|cc|cxx|cpp|h|hpp|hxx|py)$
+
+      - id: ament_lint_cmake
+        name: ament_lint_cmake
+        description: Lint CMakeLists.txt files.
+        entry: ament_lint_cmake
+        language: system
+        files: ^src/(freezer_driver|freezer_msgs|freezer_node)/.*CMakeLists\.txt$
+
+      - id: ament_cpplint
+        name: ament_cpplint
+        description: Lint C++ files with cpplint.
+        entry: ament_cpplint
+        language: system
+        args: ["--linelength=121", "--filter=-whitespace/newline"]
+        files: ^src/(freezer_driver|freezer_msgs|freezer_node)/.*\.(c|cc|cxx|cpp|h|hpp|hxx)$

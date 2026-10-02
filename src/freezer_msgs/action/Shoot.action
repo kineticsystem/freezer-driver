@@ -1,0 +1,44 @@
+# Fire a shot on the Freezer board.
+
+# Goal
+
+# The name of a sequence in the node parameters. Empty for default_sequence.
+# Ignored when steps is not empty.
+string sequence
+
+# A raw table, for experiments. When not empty, it is sent as it is. It must
+# end with all outputs off.
+freezer_msgs/Step[] steps
+
+---
+
+# Result
+
+# Why the shot failed, empty on success.
+string message
+
+# The id the controller gave the shot.
+uint16 shot_id
+
+# Host time when the controller confirmed the start of the shot.
+builtin_interfaces/Time started
+
+# Duration of the table, as computed by the controller.
+uint32 duration_us
+
+# The latest a step boundary came after its time, as measured by the controller.
+uint32 worst_lateness_us
+
+---
+
+# Feedback
+
+uint8 LOADING = 0  # The table is being loaded into the controller.
+uint8 RUNNING = 1  # The controller has started the shot.
+uint8 state
+
+# Valid when RUNNING.
+uint16 shot_id
+uint32 duration_us
+uint8 step
+uint32 elapsed_us

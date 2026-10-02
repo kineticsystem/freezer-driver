@@ -1,0 +1,33 @@
+# Parameters of the Freezer node. The durations are in milliseconds; the node
+# rounds them to the microseconds the controller counts.
+freezer:
+  ros__parameters:
+    use_fake: true
+    usb_port: /dev/ttyUSB0
+    baudrate: 9600
+    timeout: 0.2          # s, for one answer
+    connect_delay: 1.0    # s, the Nano resets when the port opens
+    poll_period: 0.01     # s
+    end_margin: 0.1       # s, after the duration, before giving up
+    default_sequence: flash_shot
+    sequence_names: [flash_shot, timed_light]
+    sequences:
+      # The shot of the Freezer sketch: seven cameras and a flash on OUT8.
+      flash_shot:
+        recipe: flash
+        cameras: [1, 2, 3, 4, 5, 6, 7]
+        flashes: [8]
+        focus_ms: 100.0
+        shutter_to_flash_ms: 100.0
+        flash_ms: 100.0
+        cooldown_ms: 200.0
+      # The shot of StepIt Old: four cameras and lights on OUT5 to OUT8.
+      timed_light:
+        recipe: timed_light
+        cameras: [1, 2, 3, 4]
+        lights: [5, 6, 7, 8]
+        focus_ms: 100.0
+        shutter_to_light_ms: 500.0
+        light_ms: 200.0
+        light_to_close_ms: 200.0
+        cooldown_ms: 200.0
