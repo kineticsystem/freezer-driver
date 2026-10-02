@@ -1,0 +1,35 @@
+# The ament linters of every package. They run in the ROS image, which ships
+# them: ros-tooling/setup-ros, which installed ROS on the runner, first asks the
+# GitHub API for a release without credentials, and fails whenever that API is
+# rate limited.
+
+name: ROS Lint
+
+on: [push, pull_request]
+
+jobs:
+  ament_lint:
+    name: ament_${{ matrix.linter }}
+    runs-on: ubuntu-24.04
+    container: ros:jazzy-ros-base
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - linter: copyright
+          - linter: lint_cmake
+          - linter: cpplint
+            # As in .pre-commit-config.yaml.
+            arguments: --linelength=121 --filter=-whitespace/newline
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          # Every package in one call: a linter fails on a package with no file
+          # of its kind, e.g. cpplint on a package of messages only.
+          ament_${{ matrix.linter }} ${{ matrix.arguments }} \
+            src/freezer_driver \
+            src/freezer_msgs \
+            src/freezer_node

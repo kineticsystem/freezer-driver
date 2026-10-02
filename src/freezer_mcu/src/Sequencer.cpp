@@ -159,8 +159,8 @@ void init()
 {
   ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
   {
-    TCCR1A = 0;            // Normal mode, OC1A and OC1B disconnected.
-    TCCR1B = _BV(CS11);    // Prescaler 8: 0.5 µs a tick at 16 MHz.
+    TCCR1A = 0;          // Normal mode, OC1A and OC1B disconnected.
+    TCCR1B = _BV(CS11);  // Prescaler 8: 0.5 µs a tick at 16 MHz.
     TCNT1 = 0;
     TIFR1 = _BV(TOV1) | _BV(OCF1A);
     TIMSK1 = _BV(TOIE1);  // The compare match is enabled by start().

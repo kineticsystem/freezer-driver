@@ -1,0 +1,26 @@
+# This is a format job. Pre-commit has a first-party GitHub action, so we use
+# that: https://github.com/pre-commit/action
+
+name: Format
+
+on: [push, pull_request]
+
+jobs:
+  pre-commit:
+    name: Format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4.4.0
+        with:
+          python-version: "3.12"
+      - name: Install system hooks
+        run: sudo apt-get update -qq && sudo apt-get install -qq clang-format cppcheck
+      - uses: pre-commit/action@v3.0.0
+        env:
+          # ament_copyright/ament_lint_cmake/ament_cpplint need a sourced ROS
+          # workspace, which this job doesn't set up. They're already run
+          # (with ROS properly sourced) by ci-ros-lint.yml.
+          SKIP: ament_copyright,ament_lint_cmake,ament_cpplint
+        with:
+          extra_args: --all-files --hook-stage manual
