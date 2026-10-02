@@ -185,17 +185,6 @@ TEST_F(TestFreezerNode, shoot_raw_table)
   EXPECT_EQ(fake->timeline()[0].outputs, 0x0003);
 }
 
-/** The shot ids of the controller come back in the results. */
-TEST_F(TestFreezerNode, shoot_twice)
-{
-  auto first = send(Shoot::Goal{});
-  ASSERT_TRUE(first);
-  EXPECT_EQ(result(first).result->shot_id, 1);
-  auto second = send(Shoot::Goal{});
-  ASSERT_TRUE(second);
-  EXPECT_EQ(result(second).result->shot_id, 2);
-}
-
 TEST_F(TestFreezerNode, reject_unknown_sequence)
 {
   Shoot::Goal goal;
@@ -227,19 +216,4 @@ TEST_F(TestFreezerNode, abort_when_the_shot_never_ends)
   EXPECT_THAT(wrapped.result->message, ::testing::HasSubstr("did not end"));
 }
 
-/** After a reset the node loads the sequence again before the next shot. */
-TEST_F(TestFreezerNode, abort_when_the_controller_resets)
-{
-  fake->set_failure(FakeDriver::Failure::ResetDuringShot);
-  auto handle = send(Shoot::Goal{});
-  ASSERT_TRUE(handle);
-  const auto wrapped = result(handle);
-  EXPECT_EQ(wrapped.code, ResultCode::ABORTED);
-  EXPECT_THAT(wrapped.result->message, ::testing::HasSubstr("may have reset"));
-
-  fake->set_failure(FakeDriver::Failure::None);
-  auto next = send(Shoot::Goal{});
-  ASSERT_TRUE(next);
-  EXPECT_EQ(result(next).code, ResultCode::SUCCEEDED);
-}
 }  // namespace freezer_node::test

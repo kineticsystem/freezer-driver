@@ -654,7 +654,7 @@ The hold is a `uint32` in microseconds, not a `builtin_interfaces/Duration`: it 
 |---|---|
 | `handle_goal` | rejects the goal when the driver is not connected, when a goal is already active, or when the table breaks a rule of the limits read at the handshake; accepts and executes it otherwise |
 | `handle_cancel` | accepts while `LOADING`, rejects once `RUNNING`: a shot that has started always runs to the end |
-| execution | loads the table when its checksum differs from the loaded one, sends `Shoot`, publishes `RUNNING`, polls the status and publishes it as feedback, and succeeds when the controller is idle with the shot id; aborts with a `message` on an error or a timeout |
+| execution | hands the table to `ShotRunner`, which loads it when its checksum differs from the loaded one, sends `Shoot`, and polls the status until the controller is idle with the shot id; publishes `RUNNING` and the progress as feedback, and succeeds, or aborts with a `message` on an error or a timeout |
 
 A rejection carries no reason in ROS2, so the node logs it, and the rules are the ones `Info` reported, which a client can read too. Validating in `handle_goal` costs no serial traffic: the limits are known since the handshake.
 
@@ -791,7 +791,7 @@ Following the layout of StepIt Driver:
 
 | Package | Role |
 |---|---|
-| `freezer_driver` | `Driver` interface, `DefaultDriver` over the serial port, `FakeDriver` that runs the table with a host clock, the recipe builder |
+| `freezer_driver` | `Driver` interface, `DefaultDriver` over the serial port, `FakeDriver` that runs the table with a host clock, the recipe builder, and `ShotRunner`, which loads, fires and polls a shot with no ROS |
 | `freezer_msgs` | the `Shoot` action |
 | `freezer_node` | the action server, parameters for the serial port, `use_fake` and the default durations |
 | `freezer_mcu` | PlatformIO project for the Nano, not built by colcon |
@@ -821,7 +821,8 @@ The node chooses the fake with a `use_fake` parameter, as StepIt chooses it with
 | `test_default_driver` | the frames `DefaultDriver` sends and how it reads the answers, against a GMock of `FramedSerial`, as in StepIt |
 | `test_sequence` | the encoding of a table, its checksum and the rules of the controller |
 | `test_recipes` | each recipe produces the expected table, and the jack to bit mapping |
-| `test_freezer_node` | the action against `FakeDriver`: accepted, feedback, result, goals rejected while a shot runs or with a bad table, a shot that never ends, a controller that resets |
+| `test_shot_runner` | a shot from load to end on `FakeDriver` and a clock the test moves: the callbacks, a sequence loaded once, a cancel, a refused table, a shot that never ends, a reset during and between shots |
+| `test_freezer_node` | the action against `FakeDriver`, for what only ROS2 does: the goals, named or raw, the rejections, and an aborted shot reaching the client |
 | `test_sequencer` | the firmware sequencer, compiled for the host, see below |
 
 ### Testing the Firmware Logic

@@ -43,7 +43,6 @@ namespace freezer_node
 {
 using freezer_driver::Response;
 using freezer_driver::Sequence;
-using freezer_driver::StatusResponse;
 using freezer_driver::Step;
 
 namespace
@@ -85,6 +84,19 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
     driver_ = create_driver();
   }
   connect();
+
+  // poll_period and end_margin are read here, once.
+  const freezer_driver::ShotRunner::Config config{
+    std::chrono::duration_cast<std::chrono::microseconds>(seconds(get_parameter("poll_period").as_double())),
+    std::chrono::duration_cast<std::chrono::microseconds>(seconds(get_parameter("end_margin").as_double())),
+  };
+  runner_ = std::make_unique<freezer_driver::ShotRunner>(
+      *driver_, config,
+      [] {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch());
+      },
+      [](std::chrono::microseconds period) { std::this_thread::sleep_for(period); });
 
   action_server_ = rclcpp_action::create_server<Shoot>(
       this, "~/shoot",
@@ -287,130 +299,69 @@ void FreezerNode::handle_accepted(std::shared_ptr<GoalHandle> goal_handle)
   worker_ = std::thread{ [this, goal_handle] { execute(goal_handle); } };
 }
 
-void FreezerNode::load(const Sequence& sequence)
-{
-  const uint16_t checksum = sequence.checksum();
-  if (loaded_checksum_ == checksum)
-  {
-    return;
-  }
-  loaded_checksum_.reset();
-  const auto response = driver_->load_sequence(sequence);
-  if (!response.success())
-  {
-    throw std::runtime_error("The controller refused the sequence: " + to_string(response.reason()) + ".");
-  }
-  if (response.checksum != checksum)
-  {
-    throw std::runtime_error("The controller computed the checksum " + std::to_string(response.checksum) +
-                             " for a sequence whose checksum is " + std::to_string(checksum) + ".");
-  }
-  loaded_checksum_ = checksum;
-}
-
 void FreezerNode::execute(const std::shared_ptr<GoalHandle>& goal_handle)
 {
+  using Outcome = freezer_driver::ShotRunner::Result::Outcome;
+
   auto result = std::make_shared<Shoot::Result>();
   auto feedback = std::make_shared<Shoot::Feedback>();
+  feedback->state = Shoot::Feedback::LOADING;
+  goal_handle->publish_feedback(feedback);
+
+  freezer_driver::ShotRunner::Result shot;
   try
   {
-    feedback->state = Shoot::Feedback::LOADING;
-    goal_handle->publish_feedback(feedback);
-
     const Sequence sequence = build_sequence(*goal_handle->get_goal());
-    const uint16_t checksum = sequence.checksum();
 
-    freezer_driver::ShootResponse shot;
-    for (int attempt = 0;; ++attempt)
-    {
-      load(sequence);
-      {
-        std::lock_guard lock{ start_mutex_ };
-        if (cancel_requested_)
-        {
-          // The server marks the goal as canceling right after handle_cancel
-          // returns; wait for it before reporting the cancellation.
-          while (!goal_handle->is_canceling())
-          {
-            std::this_thread::sleep_for(std::chrono::milliseconds{ 1 });
-          }
-          result->message = "Canceled before the shot started.";
-          goal_handle->canceled(result);
-          cancel_requested_ = false;
-          busy_ = false;
-          return;
-        }
-        started_ = true;
-      }
-      shot = driver_->shoot(checksum);
-      if (shot.success())
-      {
-        break;
-      }
-      // The controller lost the sequence, e.g. after a reset: load it again,
-      // once.
-      const bool lost = shot.reason() == Response::Reason::NoTable || shot.reason() == Response::Reason::WrongTable;
-      loaded_checksum_.reset();
-      if (!lost || attempt > 0)
-      {
-        throw std::runtime_error("The controller refused the shot: " + to_string(shot.reason()) + ".");
-      }
+    freezer_driver::ShotRunner::Callbacks callbacks;
+    callbacks.start = [this] {
       std::lock_guard lock{ start_mutex_ };
-      started_ = false;
-    }
-
-    result->started = now();
-    result->shot_id = shot.shot_id;
-    result->duration_us = shot.duration_us;
-    feedback->state = Shoot::Feedback::RUNNING;
-    feedback->shot_id = shot.shot_id;
-    feedback->duration_us = shot.duration_us;
-    goal_handle->publish_feedback(feedback);
-
-    // The controller is the authority on the end of the shot. The host knows
-    // its duration, but only as a deadline: the controller clock, the USB
-    // latency or a reset can each make the prediction wrong.
-    const auto poll_period = seconds(get_parameter("poll_period").as_double());
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds{ shot.duration_us } +
-                          std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                              seconds(get_parameter("end_margin").as_double()));
-    while (true)
-    {
-      std::this_thread::sleep_for(poll_period);
-      const StatusResponse status = driver_->get_status();
-      if (!status.success())
-      {
-        throw std::runtime_error("The controller refused the status query: " + to_string(status.reason()) + ".");
-      }
-      if (status.state == StatusResponse::State::Running)
-      {
-        feedback->step = status.step;
-        feedback->elapsed_us = status.elapsed_us;
-        goal_handle->publish_feedback(feedback);
-      }
-      else if (status.last_shot_id == shot.shot_id)
-      {
-        result->worst_lateness_us = status.worst_lateness_us;
-        goal_handle->succeed(result);
-        break;
-      }
-      else
-      {
-        loaded_checksum_.reset();
-        throw std::runtime_error("The controller lost shot " + std::to_string(shot.shot_id) + ": it may have reset.");
-      }
-      if (std::chrono::steady_clock::now() > deadline)
-      {
-        throw std::runtime_error("Shot " + std::to_string(shot.shot_id) + " did not end within its " +
-                                 std::to_string(shot.duration_us) + " us and the margin.");
-      }
-    }
+      started_ = !cancel_requested_;
+      return started_;
+    };
+    callbacks.started = [&](uint16_t shot_id, uint32_t duration_us) {
+      result->started = now();
+      feedback->state = Shoot::Feedback::RUNNING;
+      feedback->shot_id = shot_id;
+      feedback->duration_us = duration_us;
+      goal_handle->publish_feedback(feedback);
+    };
+    callbacks.progress = [&](uint8_t step, uint32_t elapsed_us) {
+      feedback->step = step;
+      feedback->elapsed_us = elapsed_us;
+      goal_handle->publish_feedback(feedback);
+    };
+    shot = runner_->run(sequence, callbacks);
   }
   catch (const std::exception& ex)
   {
-    RCLCPP_ERROR(get_logger(), "Shot failed: %s", ex.what());
-    result->message = ex.what();
-    goal_handle->abort(result);
+    // The parameters of the sequence changed since the goal was accepted.
+    shot.outcome = Outcome::Aborted;
+    shot.message = ex.what();
+  }
+
+  result->message = shot.message;
+  result->shot_id = shot.shot_id;
+  result->duration_us = shot.duration_us;
+  result->worst_lateness_us = shot.worst_lateness_us;
+  switch (shot.outcome)
+  {
+    case Outcome::Succeeded:
+      goal_handle->succeed(result);
+      break;
+    case Outcome::Canceled:
+      // The server marks the goal as canceling right after handle_cancel
+      // returns; wait for it before reporting the cancellation.
+      while (!goal_handle->is_canceling())
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 1 });
+      }
+      goal_handle->canceled(result);
+      break;
+    case Outcome::Aborted:
+      RCLCPP_ERROR(get_logger(), "Shot failed: %s", shot.message.c_str());
+      goal_handle->abort(result);
+      break;
   }
 
   std::lock_guard lock{ start_mutex_ };

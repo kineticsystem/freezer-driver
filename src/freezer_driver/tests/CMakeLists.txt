@@ -42,3 +42,11 @@ ament_add_gmock(test_recipes
     test_recipes.cpp
 )
 target_link_libraries(test_recipes freezer_driver)
+
+###############################################################################
+# test_shot_runner
+
+ament_add_gmock(test_shot_runner
+    test_shot_runner.cpp
+)
+target_link_libraries(test_shot_runner freezer_driver)

@@ -197,7 +197,7 @@ The packages are the following.
 | Package | Role |
 |---|---|
 | `freezer_msgs` | the `Shoot` action and the `Step` message |
-| `freezer_driver` | the `Driver` interface, `DefaultDriver` over the serial port, `FakeDriver`, the sequence rules and the recipes |
+| `freezer_driver` | the `Driver` interface, `DefaultDriver` over the serial port, `FakeDriver`, the sequence rules, the recipes, and `ShotRunner`, which runs one shot on a driver |
 | `freezer_node` | the node `freezer`, a `Shoot` action server, its parameters and its launch file |
 | `framed_serial` | the framed serial protocol, shared with StepIt Driver, in the submodule `modules/framed-serial`, from [framed-serial](https://github.com/kineticsystem/framed-serial) |
 | `serial` | the serial port library, in the submodule `modules/serial`, from [serial](https://github.com/kineticsystem/serial), branch `ros2` |
