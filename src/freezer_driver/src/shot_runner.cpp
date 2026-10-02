@@ -121,8 +121,7 @@ ShotRunner::Result ShotRunner::run(const Sequence& sequence, const Callbacks& ca
       else
       {
         loaded_checksum_.reset();
-        throw std::runtime_error("The controller lost shot " + std::to_string(shot.shot_id) +
-                                 ": it may have reset.");
+        throw std::runtime_error("The controller lost shot " + std::to_string(shot.shot_id) + ": it may have reset.");
       }
       if (clock_() > deadline)
       {

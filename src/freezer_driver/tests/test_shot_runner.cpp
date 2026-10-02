@@ -45,8 +45,8 @@ struct TestShotRunner : public ::testing::Test
 {
   microseconds now{ 0 };
   FakeDriver driver{ [this] { return now; } };
-  ShotRunner runner{ driver, ShotRunner::Config{ microseconds{ 1'000 }, microseconds{ 5'000 } },
-                     [this] { return now; }, [this](microseconds period) { now += period; } };
+  ShotRunner runner{ driver, ShotRunner::Config{ microseconds{ 1'000 }, microseconds{ 5'000 } }, [this] { return now; },
+                     [this](microseconds period) { now += period; } };
 
   // Focus 2 ms, shutter 3 ms, release 5 ms: 10 ms in all.
   const Sequence sequence{ {
