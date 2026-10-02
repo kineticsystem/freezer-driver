@@ -29,6 +29,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <future>
 #include <memory>
@@ -158,10 +159,12 @@ TEST_F(TestFreezerNode, shoot_default_sequence)
   }
   EXPECT_EQ(outputs, (std::vector<uint16_t>{ 10922, 16383, 65535, 0 }));
 
+  // rclcpp_action drops the feedback published before the client has
+  // processed the acceptance of its goal, so the client may miss LOADING, and
+  // on a slow machine the first RUNNING too. What it receives is in order.
   std::lock_guard lock{ mutex };
-  ASSERT_GE(states.size(), 2u);
-  EXPECT_EQ(states.front(), Shoot::Feedback::LOADING);
-  EXPECT_THAT(states, ::testing::Contains(Shoot::Feedback::RUNNING));
+  const auto running = std::find(states.begin(), states.end(), Shoot::Feedback::RUNNING);
+  EXPECT_EQ(std::find(running, states.end(), Shoot::Feedback::LOADING), states.end());
 }
 
 TEST_F(TestFreezerNode, shoot_named_sequence)

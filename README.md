@@ -1,5 +1,9 @@
 # Freezer Driver
 
+[![CI](https://github.com/kineticsystem/freezer-driver/actions/workflows/industrial_ci.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/industrial_ci.yml)
+[![Format](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-format.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-format.yml)
+[![Linters](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-ros-lint.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-ros-lint.yml)
+
 ## Table of Contents <!-- omit in toc -->
 
 - [Introduction](#introduction)
@@ -15,6 +19,7 @@
 - [Running the Application](#running-the-application)
   - [Parameters](#parameters)
 - [Troubleshooting](#troubleshooting)
+- [How to run GitHub Actions locally](#how-to-run-github-actions-locally)
 
 ## Introduction
 
@@ -213,7 +218,7 @@ Open a different terminal, attach to the same container with `./docker/dock.sh f
 ros2 action send_goal --feedback /freezer/shoot freezer_msgs/action/Shoot "{}"
 ```
 
-The feedback says `state: 0` while the sequence is loaded into the controller, then `state: 1` with the shot id once the shot has started. The result comes when the controller reports the shot has ended.
+The feedback says `state: 0` while the sequence is loaded into the controller, then `state: 1` with the shot id once the shot has started. The result comes when the controller reports the shot has ended, with the shot id and the time it started. A client can miss the first feedback: ROS2 drops the feedback published before the client has processed the acceptance of its goal. A client that needs to know a shot has started can rely on the result, not on the feedback.
 
 To fire a sequence by name, give it in the goal:
 
@@ -276,4 +281,47 @@ Each sequence has a `recipe` and the parameters of that recipe, in milliseconds.
 
 ```
 echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB0/latency_timer
+```
+
+## How to run GitHub Actions locally
+
+At each push and pull request, the GitHub repository runs three workflows:
+
+| Workflow | What it does |
+|---|---|
+| [`industrial_ci.yml`](.github/workflows/industrial_ci.yml) | builds the packages and runs their tests with [Industrial CI](https://github.com/ros-industrial/industrial_ci), in a container with Ubuntu 24.04 and ROS2 Jazzy |
+| [`ci-format.yml`](.github/workflows/ci-format.yml) | runs the pre-commit hooks on every file, except the ament linters |
+| [`ci-ros-lint.yml`](.github/workflows/ci-ros-lint.yml) | runs `ament_copyright`, `ament_lint_cmake` and `ament_cpplint` on `freezer_driver`, `freezer_msgs` and `freezer_node` |
+
+The checkout of `industrial_ci` does not fetch the submodules: it builds `framed_serial` and `serial` from the repositories listed in [`freezer.repos`](freezer.repos). A new submodule must be added there too. The firmware, `freezer_mcu`, is not built by CI.
+
+Sometimes, it may be desirable to execute the Continuous Integration pipeline locally. This is possible by using [Nektos](https://github.com/nektos/act).
+
+Install the `act` command in the user folder `~/bin` as explained in the Nektos README.md file. The `.env` file at the root of the repository defines the global variables required by Industrial CI.
+
+On its first run `act` asks interactively which runner image to use and aborts if it cannot prompt, so choose the image up front. Create `~/.config/act/actrc` with:
+
+```
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+-P ubuntu-24.04=catthehacker/ubuntu:act-24.04
+-P ubuntu-22.04=catthehacker/ubuntu:act-22.04
+```
+
+Then run any of the three workflows from the root of the repository:
+
+```
+~/bin/act pull_request --workflows ./.github/workflows/ci-format.yml    -s GITHUB_TOKEN=""
+~/bin/act pull_request --workflows ./.github/workflows/ci-ros-lint.yml  -s GITHUB_TOKEN=""
+~/bin/act pull_request --workflows ./.github/workflows/industrial_ci.yml -s GITHUB_TOKEN=""
+```
+
+The repository is public and `act` runs against the working tree rather than checking the code out, so no GitHub token is needed; the empty secret above stops `act` from prompting for one.
+
+`industrial_ci` runs as a Docker action that mounts the workspace, so it does not honour `.gitignore`, and `rosdep` ends up scanning `build/` and `install/` too, and fails. The `build` script prevents this by dropping a `CATKIN_IGNORE` file into each of those directories, which is the marker `rosdep` looks for.
+
+To check the format and the linters without `act`, run the same commands inside the container:
+
+```
+SKIP=ament_copyright,ament_lint_cmake,ament_cpplint pre-commit run --all-files --hook-stage manual
+ament_copyright src/freezer_driver src/freezer_msgs src/freezer_node
 ```
