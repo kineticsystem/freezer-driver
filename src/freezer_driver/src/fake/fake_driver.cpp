@@ -51,7 +51,7 @@ void FakeDriver::disconnect()
 InfoResponse FakeDriver::get_info()
 {
   InfoResponse response{ Response::Status::Success };
-  response.version = Version{ 1, 0, 0 };
+  response.version = Version{ 1, 1, 0 };
   response.limits = kLimits;
   response.name = "FREEZER";
   return response;

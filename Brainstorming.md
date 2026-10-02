@@ -46,7 +46,7 @@
 
 Freezer Driver lets ROS2 fire the Freezer board: up to 7 cameras and a flash, through the optocouplers driven by two 74HC595 shift registers on an Arduino Nano. It talks to the board the way [StepIt Driver](https://github.com/kineticsystem/stepit-driver) talks to its Teensy: framed, CRC-checked request and response messages over the USB serial port.
 
-This document collects ideas, and the decisions taken so far are listed in [Decisions](#decisions). The ROS2 packages in `src` implement them and run with the fake controller; the firmware answers the handshake only. See the [README](README.md) to build and run them. It follows one rule that everything else must respect: **once a shot starts, its timing belongs to the controller and nothing interrupts it**. The host asks for a shot and is told straight away that it has started, then polls until the controller says it has ended.
+This document collects ideas, and the decisions taken so far are listed in [Decisions](#decisions). The ROS2 packages and the firmware in `src` implement them, and fire shots on a Nano. See the [README](README.md) to build and run them. It follows one rule that everything else must respect: **once a shot starts, its timing belongs to the controller and nothing interrupts it**. The host asks for a shot and is told straight away that it has started, then polls until the controller says it has ended.
 
 ## Decisions
 
@@ -157,7 +157,7 @@ A generic table moves the responsibility for a safe shot from the firmware code 
 - **that does not end with `0x0000`.** A camera must never be left with its shutter held, and a light must never stay on.
 - **with more steps than it can store**, e.g. 8 or 16, depending on the RAM left on the Nano.
 - **longer in total than a limit**, e.g. 10 s, computed with the repeats unrolled and the waits counted at their timeout.
-- **with a hold shorter than it can time**, about 20 µs on the Nano: the interrupt, the shift of the next pattern and the latch must fit in it.
+- **with a hold shorter than it can time**, 40 µs on the Nano: the interrupt, the latch and the shift of the next pattern take about 27.5 µs, measured, and shorter steps fall behind one after the other.
 - **with a repeat that points outside the table or forward**, or nested repeats, if we do not support them.
 
 A rejected table changes nothing: the previous table stays loaded and the outputs do not move.
@@ -491,7 +491,7 @@ Polling, Idea 1 and 2, avoids all of this at the price of traffic during the sho
 The timer makes this possible: polling is served by `loop()`, and the Timer1 interrupt latches each pattern at its count whatever `loop()` is doing. A poll can delay a step only by the length of another interrupt, a few microseconds, and that delay does not add up from step to step. The rules that keep it so:
 
 - **No long critical section in `loop()`.** Copying the shot state for a status answer uses the `Guard` flags of StepIt or an atomic block of a few microseconds. No library that disables interrupts for long, e.g. `SoftwareSerial`.
-- **A short interrupt.** Latch, shift the next pattern with direct port writes, about 10 to 20 µs, set the next compare value. No serial, no `digitalWrite`, no floating point.
+- **A short interrupt.** Latch, shift the next pattern with direct port writes, set the next compare value: about 27.5 µs in all, measured on the Nano. No serial, no `digitalWrite`, no floating point.
 - **Safe reads of shared state.** A 16-bit or 32-bit value read by `loop()` can be torn by the interrupt on an 8-bit microcontroller, so it is read under a guard.
 
 Learning the end of the shot late, by up to one polling period plus the USB latency, is harmless when the cooldown alone is 200 ms.
@@ -541,7 +541,7 @@ The driver accepts the controller only when:
 
 Then it logs the firmware version and keeps the limits, which the recipe builder and the `FakeDriver` use to reject a table before sending it.
 
-**The version.** The firmware defines `VERSION_MAJOR`, `VERSION_MINOR` and `VERSION_PATCH`, the driver `kExpectedProtocolVersion`, as in StepIt. The first version is `1.0.0`.
+**The version.** The firmware defines `VERSION_MAJOR`, `VERSION_MINOR` and `VERSION_PATCH`, the driver `kExpectedProtocolVersion`, as in StepIt. The first version is `1.0.0`, which answers `Info` and `Echo`; `1.1.0` adds `LoadSequence`, `Shoot` and `Status`, a minor version since a driver of 1.0.0 knows nothing of them.
 
 | Part | Changes when | Driver |
 |---|---|---|

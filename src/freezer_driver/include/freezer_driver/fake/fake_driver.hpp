@@ -70,7 +70,7 @@ public:
   };
 
   /** The limits of the firmware. */
-  static constexpr SequenceLimits kLimits{ 16, 20, 10'000'000 };
+  static constexpr SequenceLimits kLimits{ 16, 40, 10'000'000 };
 
   /**
    * @param clock The time, by default the steady clock of the computer.
