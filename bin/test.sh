@@ -11,5 +11,7 @@ source /opt/ros/jazzy/setup.bash
 # build/test/update aliases in the container.
 cd "$(dirname "$(readlink -f "$0")")/.."
 
+(cd web && pnpm run typecheck && pnpm run test)
+
 colcon test --return-code-on-test-failure
 colcon test-result --all --verbose

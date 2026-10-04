@@ -110,6 +110,12 @@ public:
   /** Run a shot, with no callbacks. */
   Result run(const Sequence& sequence);
 
+  /**
+   * The sequence the runner loaded last, which the controller holds unless
+   * it lost it, e.g. the one the remote trigger fires. Not while run() runs.
+   */
+  const std::optional<Sequence>& loaded() const;
+
 private:
   /**
    * Load the sequence into the controller, unless it is already there.

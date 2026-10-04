@@ -58,6 +58,23 @@ public:
   Response stop() override;
   StatusResponse get_status() override;
 
+  /**
+   * Call a function with the wrapped driver, under the same lock as the
+   * calls above, e.g. to press the trigger of a FakeDriver.
+   */
+  template <typename Function>
+  auto with_driver(Function&& function)
+  {
+    std::lock_guard lock{ mutex_ };
+    return function(*driver_);
+  }
+
+  /** The wrapped driver, to inspect its type; call it through with_driver(). */
+  const Driver& driver() const
+  {
+    return *driver_;
+  }
+
 private:
   std::unique_ptr<Driver> driver_;
   std::mutex mutex_;

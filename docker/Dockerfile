@@ -38,6 +38,17 @@ RUN apt-get install -y --no-install-recommends ros-jazzy-rmw-cyclonedds-cpp
 RUN apt-get install -y python3-colcon-common-extensions
 RUN apt-get install -y pre-commit
 
+# The board page, in ./web, is built with Node.js, from the official binaries,
+# and pnpm, through corepack, which ships with Node.js and pins the pnpm version
+# declared in web/package.json. Only building it needs them: the launch file
+# serves the result with Python.
+ARG NODE_VERSION=24.15.0
+RUN apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
+ && arch=$(dpkg --print-architecture | sed 's/amd64/x64/') \
+ && curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${arch}.tar.xz \
+  | tar -xJ -C /usr/local --strip-components=1 \
+ && corepack enable
+
 # The container user is in the sudo group, but a password prompt makes the
 # scripts in ./bin unusable from a non-interactive shell: rosdep shells out to
 # `sudo apt-get`, and sudo refuses to read a password without a terminal. That
@@ -60,6 +71,10 @@ ENV HOME=/home/developer
 # spelled out: nothing expands a ~ in an ENV.
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ENV CYCLONEDDS_URI=/home/developer/.ros/cyclonedds.xml
+
+# Answer corepack's download prompt for pnpm, so that non-interactive commands
+# do not hang on it.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
 # The repo is bind-mounted at ~/ws (see docker-compose.yml), so ./bin lives at
 # a fixed path inside the container. Putting it on the PATH here rather than in

@@ -21,7 +21,7 @@ freezer:
         shutter_to_flash_ms: 100.0
         flash_ms: 100.0
         cooldown_ms: 200.0
-      # The shot of StepIt Old: four cameras and lights on OUT5 to OUT8.
+      # The shot of the old firmware: four cameras and lights on OUT5 to OUT8.
       timed_light:
         recipe: timed_light
         cameras: [1, 2, 3, 4]

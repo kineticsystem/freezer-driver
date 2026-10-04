@@ -1,4 +1,4 @@
-exclude: \.uxf$|^(build|install|log)/
+exclude: \.uxf$|^(build|install|log)/|^docs/hardware/gerber/
 
 # To use:
 #
@@ -43,7 +43,7 @@ repos:
     hooks:
       - id: codespell
         args: ["--write-changes", "-L", "atleast"] # Provide a comma-separated list of misspelled words that codespell should ignore (for example: '-L', 'word1,word2,word3').
-        exclude: \.(svg|pyc|stl|dae|lock)$
+        exclude: \.(svg|pyc|stl|dae|lock)$|pnpm-lock\.yaml$
 
   - repo: local
     hooks:

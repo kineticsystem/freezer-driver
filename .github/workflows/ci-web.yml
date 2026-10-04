@@ -1,0 +1,23 @@
+# The board page, in ./web: type check, test and build it with the pnpm version
+# its package.json pins.
+
+name: Web
+
+on: [push, pull_request]
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run test
+      - run: pnpm run build

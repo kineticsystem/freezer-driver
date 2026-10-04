@@ -31,8 +31,7 @@
 #include "Sequencer.h"
 
 // Shift register connections, as routed on the Freezer board. The pin labels
-// of motherboard/CircuitSchema.png in the Freezer repository are wrong; these
-// are the ones of the PCB.
+// of docs/hardware/CircuitSchema.png are wrong; these are the ones of the PCB.
 constexpr byte OVERRIDING_CLEAR_PIN = 2;  // MR of the 74HC595, low active.
 constexpr byte CLOCK_PIN = 3;             // SH_CP of the 74HC595.
 constexpr byte DATA_PIN = 4;              // DS of the 74HC595.
@@ -112,7 +111,7 @@ void returnCommandError(byte reason)
  * limits of a sequence.
  *
  * The response carries the limits before the name so that the name is the
- * remaining bytes of the packet, as in StepIt:
+ * remaining bytes of the packet:
  *
  *   status           - 1 byte
  *   version          - 3 bytes: major, minor and patch

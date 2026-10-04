@@ -90,10 +90,10 @@ TEST(TestRecipes, flash_shot_matches_freezer_sketch)
 }
 
 /**
- * Four cameras and lights on OUT5 to OUT8 give the patterns of StepIt Old:
+ * Four cameras and lights on OUT5 to OUT8 give the patterns of the old firmware:
  * 0x00AA to focus, 0x00FF to open the shutters, 0xFFFF with the lights on.
  */
-TEST(TestRecipes, timed_light_matches_stepit_old)
+TEST(TestRecipes, timed_light_matches_the_old_firmware)
 {
   const TimedLightRecipe recipe{ { 1, 2, 3, 4 }, { 5, 6, 7, 8 }, 100.0, 500.0, 200.0, 200.0, 200.0 };
   const Sequence sequence = recipe.build();
