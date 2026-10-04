@@ -39,26 +39,36 @@
 #include <freezer_driver/sequence.hpp>
 #include <freezer_driver/shot_runner.hpp>
 #include <freezer_msgs/action/shoot.hpp>
+#include <freezer_msgs/srv/set_outputs.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 namespace freezer_node
 {
 /**
- * @brief The ROS2 node of the Freezer board: a Shoot action server.
+ * @brief The ROS2 node of the Freezer board: a Shoot action server, and the
+ * services set_outputs and stop.
  *
  * A goal names a sequence of the node parameters, or carries a raw table. The
  * node checks it, then hands it to a ShotRunner, which loads it into the
  * controller, fires it and polls the controller until the shot has ended, and
  * turns what the runner reports into feedback and a result. One shot runs at
- * a time, on a thread that owns the driver.
+ * a time, on a thread of its own.
+ *
+ * set_outputs latches a pattern outside a shot, e.g. the lights; stop ends
+ * the running shot, whose goal then aborts, and switches every output off.
+ * They call the controller from the executor's thread, between two queries of
+ * the shot's thread: the driver is shared, one call at a time.
  */
 class FreezerNode : public rclcpp::Node
 {
 public:
   using Shoot = freezer_msgs::action::Shoot;
   using GoalHandle = rclcpp_action::ServerGoalHandle<Shoot>;
+  using SetOutputs = freezer_msgs::srv::SetOutputs;
+  using Trigger = std_srvs::srv::Trigger;
 
   /**
    * @brief Create the node with the driver chosen by the parameter use_fake.
@@ -94,6 +104,10 @@ private:
 
   void execute(const std::shared_ptr<GoalHandle>& goal_handle);
 
+  void handle_set_outputs(const std::shared_ptr<SetOutputs::Request>& request,
+                          const std::shared_ptr<SetOutputs::Response>& response);
+  void handle_stop(const std::shared_ptr<Trigger::Response>& response);
+
   std::unique_ptr<freezer_driver::Driver> driver_;
   std::unique_ptr<freezer_driver::ShotRunner> runner_;
   freezer_driver::SequenceLimits limits_;
@@ -101,12 +115,16 @@ private:
 
   std::atomic<bool> busy_{ false };
 
-  // A goal can be canceled until the shot starts, never after.
+  // A goal can be canceled until the shot starts, never after; it can be
+  // stopped at any time.
   std::mutex start_mutex_;
   bool started_ = false;
   bool cancel_requested_ = false;
+  bool stop_requested_ = false;
 
   std::thread worker_;
   rclcpp_action::Server<Shoot>::SharedPtr action_server_;
+  rclcpp::Service<SetOutputs>::SharedPtr set_outputs_service_;
+  rclcpp::Service<Trigger>::SharedPtr stop_service_;
 };
 }  // namespace freezer_node

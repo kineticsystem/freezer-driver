@@ -35,7 +35,6 @@ struct Status
 {
   bool running;
   bool loaded;
-  uint16_t checksum;         // Of the loaded table, 0 when none is loaded.
   uint16_t lastShotId;       // The shot running, or the last one; 0 when none since power on.
   byte step;                 // The step running, when running.
   uint32_t elapsedUs;        // Time since the start of the shot, when running.
@@ -46,11 +45,19 @@ struct Status
 void init();
 
 // Store a table, which must be valid and is copied. Only while not running.
-void load(const Step* steps, byte count, uint16_t checksum, uint32_t durationUs);
+void load(const Step* steps, byte count, uint32_t durationUs);
 
 // Fire the loaded table: latch its first pattern now and return the shot id.
 // Only while not running and with a table loaded.
 uint16_t start();
+
+// Latch a pattern on the outputs at once, where it stays until the next one.
+// Returns false, and changes nothing, while a shot runs: the shot owns the
+// outputs.
+bool setOutputs(uint16_t outputs);
+
+// End the running shot, if any, where it is, and switch every output off.
+void stop();
 
 // The duration of the loaded table, in µs.
 uint32_t duration();

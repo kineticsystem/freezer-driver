@@ -53,23 +53,21 @@ TEST_F(TestFakeDriver, handshake)
   EXPECT_TRUE(driver.connect());
   const InfoResponse info = driver.get_info();
   EXPECT_EQ(info.name, "FREEZER");
-  EXPECT_EQ(info.version.major(), 1);
+  EXPECT_EQ(info.version.major(), 2);
   EXPECT_EQ(info.limits.max_steps, 16);
 }
 
-TEST_F(TestFakeDriver, load_returns_checksum_and_duration)
+TEST_F(TestFakeDriver, load_returns_duration)
 {
   const LoadSequenceResponse response = driver.load_sequence(sequence);
   EXPECT_TRUE(response.success());
-  EXPECT_EQ(response.checksum, sequence.checksum());
   EXPECT_EQ(response.duration_us, 600u);
-  EXPECT_EQ(driver.get_status().checksum, sequence.checksum());
 }
 
 TEST_F(TestFakeDriver, shot_runs_and_ends)
 {
   driver.load_sequence(sequence);
-  const ShootResponse shot = driver.shoot(sequence.checksum());
+  const ShootResponse shot = driver.shoot();
   ASSERT_TRUE(shot.success());
   EXPECT_EQ(shot.shot_id, 1);
   EXPECT_EQ(shot.duration_us, 600u);
@@ -91,7 +89,7 @@ TEST_F(TestFakeDriver, shot_runs_and_ends)
 TEST_F(TestFakeDriver, timeline)
 {
   driver.load_sequence(sequence);
-  driver.shoot(sequence.checksum());
+  driver.shoot();
   const std::vector<FakeDriver::Latch> expected{
     { microseconds{ 1'000 }, 0x0002 },
     { microseconds{ 1'100 }, 0x0003 },
@@ -103,27 +101,21 @@ TEST_F(TestFakeDriver, timeline)
 TEST_F(TestFakeDriver, shot_ids_increase)
 {
   driver.load_sequence(sequence);
-  EXPECT_EQ(driver.shoot(sequence.checksum()).shot_id, 1);
+  EXPECT_EQ(driver.shoot().shot_id, 1);
   now += microseconds{ 600 };
-  EXPECT_EQ(driver.shoot(sequence.checksum()).shot_id, 2);
+  EXPECT_EQ(driver.shoot().shot_id, 2);
 }
 
 TEST_F(TestFakeDriver, refuse_shot_without_sequence)
 {
-  EXPECT_EQ(driver.shoot(0x1234).reason(), Response::Reason::NoTable);
-}
-
-TEST_F(TestFakeDriver, refuse_another_sequence)
-{
-  driver.load_sequence(sequence);
-  EXPECT_EQ(driver.shoot(static_cast<uint16_t>(sequence.checksum() + 1)).reason(), Response::Reason::WrongTable);
+  EXPECT_EQ(driver.shoot().reason(), Response::Reason::NoTable);
 }
 
 TEST_F(TestFakeDriver, refuse_while_running)
 {
   driver.load_sequence(sequence);
-  driver.shoot(sequence.checksum());
-  EXPECT_EQ(driver.shoot(sequence.checksum()).reason(), Response::Reason::Busy);
+  driver.shoot();
+  EXPECT_EQ(driver.shoot().reason(), Response::Reason::Busy);
   EXPECT_EQ(driver.load_sequence(sequence).reason(), Response::Reason::Busy);
 }
 
@@ -137,7 +129,7 @@ TEST_F(TestFakeDriver, never_finish)
 {
   driver.set_failure(FakeDriver::Failure::NeverFinish);
   driver.load_sequence(sequence);
-  driver.shoot(sequence.checksum());
+  driver.shoot();
   now += microseconds{ 10'000 };
   EXPECT_EQ(driver.get_status().state, StatusResponse::State::Running);
 }
@@ -147,19 +139,81 @@ TEST_F(TestFakeDriver, reset_during_shot)
 {
   driver.set_failure(FakeDriver::Failure::ResetDuringShot);
   driver.load_sequence(sequence);
-  driver.shoot(sequence.checksum());
+  driver.shoot();
   const StatusResponse status = driver.get_status();
   EXPECT_EQ(status.state, StatusResponse::State::Idle);
   EXPECT_EQ(status.last_shot_id, 0);
-  EXPECT_EQ(status.checksum, 0);
 }
 
 TEST_F(TestFakeDriver, lateness)
 {
   driver.set_lateness(8);
   driver.load_sequence(sequence);
-  driver.shoot(sequence.checksum());
+  driver.shoot();
   now += microseconds{ 600 };
   EXPECT_EQ(driver.get_status().worst_lateness_us, 8u);
+}
+/** The outputs stay as set, until set again. */
+TEST_F(TestFakeDriver, set_outputs)
+{
+  EXPECT_TRUE(driver.set_outputs(0xC000).success());
+  EXPECT_EQ(driver.outputs(), 0xC000);
+  now += microseconds{ 1'000 };
+  EXPECT_EQ(driver.outputs(), 0xC000);
+  EXPECT_TRUE(driver.set_outputs(0x0000).success());
+  EXPECT_EQ(driver.outputs(), 0x0000);
+}
+
+/** The shot owns the outputs, and ends with every one off, lights included. */
+TEST_F(TestFakeDriver, a_shot_owns_the_outputs)
+{
+  driver.set_outputs(0xC000);
+  driver.load_sequence(sequence);
+  driver.shoot();
+  EXPECT_EQ(driver.set_outputs(0xC000).reason(), Response::Reason::Busy);
+  EXPECT_EQ(driver.outputs(), 0x0002);
+  now += microseconds{ 600 };
+  EXPECT_EQ(driver.outputs(), 0x0000);
+  EXPECT_TRUE(driver.set_outputs(0xC000).success());
+}
+
+/** A stop ends the shot where it is: the patterns still to come never latch. */
+TEST_F(TestFakeDriver, stop_ends_the_shot)
+{
+  driver.load_sequence(sequence);
+  const uint16_t shot_id = driver.shoot().shot_id;
+  now += microseconds{ 150 };
+  EXPECT_TRUE(driver.stop().success());
+
+  const StatusResponse status = driver.get_status();
+  EXPECT_EQ(status.state, StatusResponse::State::Idle);
+  EXPECT_EQ(status.last_shot_id, shot_id);
+  const std::vector<FakeDriver::Latch> expected{
+    { microseconds{ 1'000 }, 0x0002 },
+    { microseconds{ 1'100 }, 0x0003 },
+    { microseconds{ 1'150 }, 0x0000 },
+  };
+  EXPECT_EQ(driver.timeline(), expected);
+}
+
+TEST_F(TestFakeDriver, stop_switches_the_outputs_off)
+{
+  driver.set_outputs(0xC000);
+  EXPECT_TRUE(driver.stop().success());
+  EXPECT_EQ(driver.outputs(), 0x0000);
+}
+
+/** IN1 fires the loaded sequence, unless a shot runs or none is loaded. */
+TEST_F(TestFakeDriver, trigger)
+{
+  EXPECT_FALSE(driver.trigger());
+  driver.load_sequence(sequence);
+  EXPECT_TRUE(driver.trigger());
+  EXPECT_EQ(driver.get_status().last_shot_id, 1);
+  EXPECT_FALSE(driver.trigger());
+  EXPECT_EQ(driver.shoot().reason(), Response::Reason::Busy);
+  now += microseconds{ 600 };
+  EXPECT_TRUE(driver.trigger());
+  EXPECT_EQ(driver.get_status().last_shot_id, 2);
 }
 }  // namespace freezer_driver::test

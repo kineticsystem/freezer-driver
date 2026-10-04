@@ -26,7 +26,8 @@
 Freezer Driver is a project to fire cameras and flashes from ROS2, through the Freezer board: an Arduino Nano driving two 74HC595 shift registers and 16 optocouplers, wired to 8 output jacks and 1 input jack.
 
 - Fire up to 7 cameras and a flash at the same time, with the timing of each step kept by a hardware timer of the Nano.
-- Load a sequence of steps once, each an output pattern and a hold time, and fire it with one short command.
+- Load a sequence of steps once, each an output pattern and a hold time, and fire it with one short command, or with the remote trigger on IN1.
+- Switch outputs on and off outside a shot, e.g. the lights, and stop a shot at any time.
 - Talk to the Nano with the same framed, CRC-checked protocol as [StepIt Driver](https://github.com/kineticsystem/stepit-driver).
 
 > [!WARNING]
@@ -87,7 +88,7 @@ No udev rule is required. StepIt Driver needs one because the Teensy is programm
 
 We develop the firmware with Visual Studio Code and the [PlatformIO](https://platformio.org) extension, as for StepIt Driver. Installing the Arduino IDE is not required.
 
-The firmware, version 1.1.0, answers `Info`, `Echo`, `LoadSequence`, `Shoot` and `Status`. Timer1 runs the shot: each step starts at its own time, within about 5 µs, measured on the Nano. A step must last at least 40 µs: shorter steps fall behind, one after the other.
+The firmware, version 2.0.0, answers `Info`, `Echo`, `LoadSequence`, `Shoot`, `Status`, `SetOutputs` and `Stop`, and fires the loaded sequence when IN1 is pressed, unless a shot is running or no sequence is loaded. Timer1 runs the shot: each step starts at its own time, within about 5 µs, measured on the Nano. A step must last at least 40 µs: shorter steps fall behind, one after the other. The driver refuses a firmware of another major version, e.g. 1.1.0: flash the firmware of the same workspace.
 
 To flash the microcontroller code into the Nano:
 
@@ -196,9 +197,9 @@ The packages are the following.
 
 | Package | Role |
 |---|---|
-| `freezer_msgs` | the `Shoot` action and the `Step` message |
+| `freezer_msgs` | the `Shoot` action, the `Step` message and the `SetOutputs` service |
 | `freezer_driver` | the `Driver` interface, `DefaultDriver` over the serial port, `FakeDriver`, the sequence rules, the recipes, and `ShotRunner`, which runs one shot on a driver |
-| `freezer_node` | the node `freezer`, a `Shoot` action server, its parameters and its launch file |
+| `freezer_node` | the node `freezer`: the `Shoot` action server, the services `set_outputs` and `stop`, its parameters and its launch file |
 | `framed_serial` | the framed serial protocol, shared with StepIt Driver, in the submodule `modules/framed-serial`, from [framed-serial](https://github.com/kineticsystem/framed-serial) |
 | `serial` | the serial port library, in the submodule `modules/serial`, from [serial](https://github.com/kineticsystem/serial), branch `ros2` |
 | `freezer_mcu` | the PlatformIO project of the Nano, in `src/freezer_mcu`, not built by colcon |
@@ -234,13 +235,28 @@ ros2 action send_goal /freezer/shoot freezer_msgs/action/Shoot "{steps: [{output
 
 A goal is rejected when no controller is connected, when a shot is running, or when its sequence breaks a rule of the controller. A rejection carries no reason in ROS2: the node logs it.
 
+To switch outputs on outside a shot, e.g. lights on OUT8, give their pattern; they stay on until the next pattern, a shot, or a stop. A shot owns every output: while it runs, the outputs cannot be set, and it ends with every output off, lights included.
+
+```
+ros2 service call /freezer/set_outputs freezer_msgs/srv/SetOutputs "{outputs: 49152}"
+ros2 service call /freezer/set_outputs freezer_msgs/srv/SetOutputs "{outputs: 0}"
+```
+
+To stop a shot where it is, and switch every output off, call `stop`. The goal of the shot aborts with the message `Stopped.`.
+
+```
+ros2 service call /freezer/stop std_srvs/srv/Trigger
+```
+
+Pressing the remote trigger, on IN1, fires the sequence loaded last, without the node; nothing is fired before the node has loaded one. A goal sent while that shot runs aborts: the controller is busy.
+
 To use the Freezer board, set the launch argument `use_fake`:
 
 ```
 ros2 launch freezer_node freezer.launch.py use_fake:=false usb_port:=/dev/ttyUSB0
 ```
 
-The result of a shot reports `worst_lateness_us`, the latest a step started after its time, as the controller measured it. With firmware 1.1.0 it is about 5 µs.
+The result of a shot reports `worst_lateness_us`, the latest a step started after its time, as the controller measured it. Measured with firmware 1.1.0, whose Timer1 code 2.0.0 keeps, it is about 5 µs.
 
 ### Parameters
 

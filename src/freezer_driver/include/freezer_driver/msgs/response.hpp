@@ -53,7 +53,6 @@ public:
     InvalidTable = 0x02,  // The sequence breaks a rule of the controller.
     Busy = 0x03,          // A shot is running.
     NoTable = 0x04,       // Shoot before any sequence is loaded.
-    WrongTable = 0x05,    // The checksum of Shoot is not the one of the loaded sequence.
   };
 
   explicit Response(Status status = Status::Success, Reason reason = Reason::None)
@@ -99,8 +98,6 @@ inline std::string to_string(Response::Reason reason)
       return "a shot is running";
     case Response::Reason::NoTable:
       return "no sequence loaded";
-    case Response::Reason::WrongTable:
-      return "another sequence is loaded";
   }
   return "unknown error " + std::to_string(static_cast<int>(reason));
 }

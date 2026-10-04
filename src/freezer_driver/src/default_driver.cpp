@@ -43,12 +43,14 @@ constexpr uint8_t kStatusQueryId = 0x75;
 constexpr uint8_t kInfoQueryId = 0x76;
 constexpr uint8_t kLoadSequenceCommandId = 0x7B;
 constexpr uint8_t kShootCommandId = 0x7C;
+constexpr uint8_t kSetOutputsCommandId = 0x77;
+constexpr uint8_t kStopCommandId = 0x78;
 
 constexpr int kMaxConnectionTrials = 5;
 
 constexpr auto kExpectedControllerName = "FREEZER";
 
-constexpr uint8_t kExpectedProtocolVersion = 1;
+constexpr uint8_t kExpectedProtocolVersion = 2;
 
 using framed_serial::data_utils::to_hex;
 
@@ -198,23 +200,21 @@ LoadSequenceResponse DefaultDriver::load_sequence(const Sequence& sequence)
   const std::vector<uint8_t> out = framed_serial_->read();
   RCLCPP_DEBUG(kLogger, "Load sequence response: %s", to_hex(out).c_str());
 
-  // status - 1 byte, checksum - 2 bytes, duration - 4 bytes in µs.
+  // status - 1 byte, duration - 4 bytes in µs.
   const Response header = read_header(out);
   LoadSequenceResponse response{ header.status(), header.reason() };
   if (!header.success())
   {
     return response;
   }
-  check_length(out, 7, "Load sequence");
-  response.checksum = to_uint16(out, 1);
-  response.duration_us = to_uint32(out, 3);
+  check_length(out, 5, "Load sequence");
+  response.duration_us = to_uint32(out, 1);
   return response;
 }
 
-ShootResponse DefaultDriver::shoot(uint16_t checksum)
+ShootResponse DefaultDriver::shoot()
 {
-  const std::vector<uint8_t> in{ kShootCommandId, static_cast<uint8_t>(checksum >> 8),
-                                 static_cast<uint8_t>(checksum & 0xFF) };
+  const std::vector<uint8_t> in{ kShootCommandId };
   RCLCPP_DEBUG(kLogger, "Shoot command: %s", to_hex(in).c_str());
   framed_serial_->write(in);
   const std::vector<uint8_t> out = framed_serial_->read();
@@ -243,7 +243,6 @@ StatusResponse DefaultDriver::get_status()
 
   // status            - 1 byte
   // state             - 1 byte: 0 idle, 1 running
-  // checksum          - 2 bytes, of the loaded sequence
   // last shot id      - 2 bytes
   // step              - 1 byte
   // elapsed           - 4 bytes, in µs
@@ -255,17 +254,37 @@ StatusResponse DefaultDriver::get_status()
   {
     return response;
   }
-  check_length(out, 15, "Status");
+  check_length(out, 13, "Status");
   if (out[1] > static_cast<uint8_t>(StatusResponse::State::Running))
   {
     throw std::runtime_error("Unknown controller state " + to_hex(std::vector<uint8_t>{ out[1] }) + ".");
   }
   response.state = StatusResponse::State{ out[1] };
-  response.checksum = to_uint16(out, 2);
-  response.last_shot_id = to_uint16(out, 4);
-  response.step = out[6];
-  response.elapsed_us = to_uint32(out, 7);
-  response.worst_lateness_us = to_uint32(out, 11);
+  response.last_shot_id = to_uint16(out, 2);
+  response.step = out[4];
+  response.elapsed_us = to_uint32(out, 5);
+  response.worst_lateness_us = to_uint32(out, 9);
   return response;
+}
+
+Response DefaultDriver::set_outputs(uint16_t outputs)
+{
+  const std::vector<uint8_t> in{ kSetOutputsCommandId, static_cast<uint8_t>(outputs >> 8),
+                                 static_cast<uint8_t>(outputs & 0xFF) };
+  RCLCPP_DEBUG(kLogger, "Set outputs command: %s", to_hex(in).c_str());
+  framed_serial_->write(in);
+  const std::vector<uint8_t> out = framed_serial_->read();
+  RCLCPP_DEBUG(kLogger, "Set outputs response: %s", to_hex(out).c_str());
+  return read_header(out);
+}
+
+Response DefaultDriver::stop()
+{
+  const std::vector<uint8_t> in{ kStopCommandId };
+  RCLCPP_DEBUG(kLogger, "Stop command: %s", to_hex(in).c_str());
+  framed_serial_->write(in);
+  const std::vector<uint8_t> out = framed_serial_->read();
+  RCLCPP_DEBUG(kLogger, "Stop response: %s", to_hex(out).c_str());
+  return read_header(out);
 }
 }  // namespace freezer_driver

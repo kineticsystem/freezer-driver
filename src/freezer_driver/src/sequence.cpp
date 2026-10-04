@@ -30,8 +30,6 @@
 
 #include <freezer_driver/sequence.hpp>
 
-#include <framed_serial/crc_utils.hpp>
-
 namespace freezer_driver
 {
 Sequence::Sequence(std::vector<Step> steps) : steps_{ std::move(steps) }
@@ -73,11 +71,6 @@ std::vector<uint8_t> Sequence::encode() const
     bytes.push_back(static_cast<uint8_t>(step.hold_us & 0xFF));
   }
   return bytes;
-}
-
-uint16_t Sequence::checksum() const
-{
-  return framed_serial::crc_ccitt(encode());
 }
 
 std::optional<std::string> validate(const Sequence& sequence, const SequenceLimits& limits)

@@ -28,7 +28,6 @@
 
 #include "SerialPort.h"
 #include "DataBuffer.h"
-#include "CrcUtils.h"
 #include "Sequencer.h"
 
 // Shift register connections, as routed on the Freezer board. The pin labels
@@ -40,10 +39,17 @@ constexpr byte DATA_PIN = 4;              // DS of the 74HC595.
 constexpr byte OUTPUT_ENABLED_PIN = 5;    // OE of the 74HC595, low active.
 constexpr byte LATCH_PIN = 6;             // ST_CP of the 74HC595.
 
+// IN1, the remote trigger: high while it is pressed, pulled down by R2. It
+// fires the loaded table, unless a shot is running or no table is loaded.
+constexpr byte TRIGGER_PIN = 7;
+// How long IN1 must stay at a level before the level counts: a button
+// bounces when pressed and when released, and each bounce would fire a shot.
+constexpr unsigned long TRIGGER_DEBOUNCE_MS = 20;
+
 constexpr char NAME[] = "FREEZER";
 
-constexpr byte VERSION_MAJOR = 1;
-constexpr byte VERSION_MINOR = 1;
+constexpr byte VERSION_MAJOR = 2;
+constexpr byte VERSION_MINOR = 0;
 constexpr byte VERSION_PATCH = 0;
 
 // Limits of a sequence, reported to the host at the handshake. The host is
@@ -57,6 +63,8 @@ constexpr byte INFO_CMD = 0x76;           // Request controller info for connect
 constexpr byte ECHO_CMD = 0x79;           // Return the given bytes, for debugging.
 constexpr byte LOAD_SEQUENCE_CMD = 0x7B;  // Store a table of steps, to be fired by SHOOT_CMD.
 constexpr byte SHOOT_CMD = 0x7C;          // Fire the loaded table.
+constexpr byte SET_OUTPUTS_CMD = 0x77;    // Switch outputs on or off, outside a shot.
+constexpr byte STOP_CMD = 0x78;           // End the running shot and switch every output off.
 
 constexpr byte STEP_SIZE = 7;  // Type, outputs and hold, in bytes.
 constexpr byte SET_AND_HOLD_STEP = 0x00;
@@ -69,7 +77,6 @@ constexpr byte MALFORMED_ERR = 0x01;      // Unknown command id or wrong payload
 constexpr byte INVALID_TABLE_ERR = 0x02;  // The table breaks a rule of the controller.
 constexpr byte BUSY_ERR = 0x03;           // A shot is running.
 constexpr byte NO_TABLE_ERR = 0x04;       // Shoot before any table is loaded.
-constexpr byte WRONG_TABLE_ERR = 0x05;    // The checksum of Shoot is not the one of the loaded table.
 
 SerialPort serialPort{ 200, 200 };
 
@@ -147,11 +154,9 @@ void echoCommand(DataBuffer* cmd)
 /**
  * Store a table of steps, to be fired by SHOOT_CMD. The payload is the step
  * count, then for each step its type, its outputs and its hold in µs, most
- * significant byte first. The answer is the checksum of the payload, the
- * CRC-16 the host computes too, and the duration of the table:
+ * significant byte first. The answer is the duration of the table:
  *
  *   status           - 1 byte
- *   checksum         - 2 bytes
  *   duration         - 4 bytes, in µs
  *
  * The table is checked whole before it replaces the loaded one, so that a
@@ -186,7 +191,6 @@ void loadSequenceCommand(DataBuffer* cmd)
   }
 
   sequencer::Step steps[MAX_STEPS];
-  uint16_t checksum = crc_utils::crc_ccitt_byte(0, count);
   uint32_t duration = 0;
   bool valid = true;
   for (byte i = 0; i < count; i++)
@@ -195,7 +199,6 @@ void loadSequenceCommand(DataBuffer* cmd)
     for (byte j = 0; j < STEP_SIZE; j++)
     {
       bytes[j] = cmd->removeByte(BufferPosition::Head);
-      checksum = crc_utils::crc_ccitt_byte(checksum, bytes[j]);
     }
     steps[i].outputs = (static_cast<uint16_t>(bytes[1]) << 8) | bytes[2];
     steps[i].holdUs = (static_cast<uint32_t>(bytes[3]) << 24) | (static_cast<uint32_t>(bytes[4]) << 16) |
@@ -217,17 +220,15 @@ void loadSequenceCommand(DataBuffer* cmd)
     return;
   }
 
-  sequencer::load(steps, count, checksum, duration);
+  sequencer::load(steps, count, duration);
   responseBuffer.addByte(SUCCESS_MSG, BufferPosition::Tail);
-  responseBuffer.addInt(checksum, BufferPosition::Tail);
   responseBuffer.addLong(duration, BufferPosition::Tail);
   serialPort.write(&responseBuffer);
 }
 
 /**
- * Fire the loaded table. The payload is the checksum of the table the host
- * means: the controller refuses to fire another one. The answer is sent once
- * the first pattern is latched:
+ * Fire the loaded table. The answer is sent once the first pattern is
+ * latched:
  *
  *   status           - 1 byte
  *   shot id          - 2 bytes
@@ -237,12 +238,11 @@ void loadSequenceCommand(DataBuffer* cmd)
  */
 void shootCommand(DataBuffer* cmd)
 {
-  if (cmd->getSize() != 2)
+  if (cmd->getSize() != 0)
   {
     returnCommandError(MALFORMED_ERR);
     return;
   }
-  const uint16_t checksum = cmd->removeInt(BufferPosition::Head);
   const sequencer::Status status = sequencer::status();
   if (status.running)
   {
@@ -252,11 +252,6 @@ void shootCommand(DataBuffer* cmd)
   if (!status.loaded)
   {
     returnCommandError(NO_TABLE_ERR);
-    return;
-  }
-  if (checksum != status.checksum)
-  {
-    returnCommandError(WRONG_TABLE_ERR);
     return;
   }
 
@@ -274,7 +269,6 @@ void shootCommand(DataBuffer* cmd)
  *
  *   status           - 1 byte
  *   state            - 1 byte: 0 idle, 1 running
- *   checksum         - 2 bytes, of the loaded table, 0 when none is loaded
  *   last shot id     - 2 bytes, 0 when none since power on
  *   step             - 1 byte, the step running
  *   elapsed          - 4 bytes, in µs since the start of the shot
@@ -292,12 +286,87 @@ void statusCommand(DataBuffer* cmd)
   const sequencer::Status status = sequencer::status();
   responseBuffer.addByte(SUCCESS_MSG, BufferPosition::Tail);
   responseBuffer.addByte(status.running ? 1 : 0, BufferPosition::Tail);
-  responseBuffer.addInt(status.checksum, BufferPosition::Tail);
   responseBuffer.addInt(status.lastShotId, BufferPosition::Tail);
   responseBuffer.addByte(status.step, BufferPosition::Tail);
   responseBuffer.addLong(status.elapsedUs, BufferPosition::Tail);
   responseBuffer.addLong(status.worstLatenessUs, BufferPosition::Tail);
   serialPort.write(&responseBuffer);
+}
+
+/**
+ * Latch a pattern on the outputs, e.g. to switch the lights on or off, where
+ * it stays until the next one, a shot or STOP_CMD. The payload is the 16
+ * outputs, 2 bytes. Refused while a shot runs: the shot owns the outputs, and
+ * only STOP_CMD ends it.
+ * @param cmd The command data.
+ */
+void setOutputsCommand(DataBuffer* cmd)
+{
+  if (cmd->getSize() != 2)
+  {
+    returnCommandError(MALFORMED_ERR);
+    return;
+  }
+  if (!sequencer::setOutputs(cmd->removeInt(BufferPosition::Head)))
+  {
+    returnCommandError(BUSY_ERR);
+    return;
+  }
+  responseBuffer.addByte(SUCCESS_MSG, BufferPosition::Tail);
+  serialPort.write(&responseBuffer);
+}
+
+/**
+ * End the running shot where it is, if any, and switch every output off.
+ * Always accepted: it is the one command a shot gives way to. The shot keeps
+ * its id, and the controller reads idle.
+ * @param cmd The command data.
+ */
+void stopCommand(DataBuffer* cmd)
+{
+  if (cmd->getSize() != 0)
+  {
+    returnCommandError(MALFORMED_ERR);
+    return;
+  }
+  sequencer::stop();
+  responseBuffer.addByte(SUCCESS_MSG, BufferPosition::Tail);
+  serialPort.write(&responseBuffer);
+}
+
+/**
+ * Fire the loaded table when IN1 is pressed, unless a shot is running or no
+ * table is loaded. A level counts once it has held for TRIGGER_DEBOUNCE_MS,
+ * and only a press fires: holding the button fires once.
+ */
+void updateTrigger()
+{
+  static bool reading = false;  // The level read last.
+  static bool pressed = false;  // The level that counts.
+  static unsigned long changedMs = 0;
+
+  const bool level = digitalRead(TRIGGER_PIN) == HIGH;
+  const unsigned long now = millis();
+  if (level != reading)
+  {
+    reading = level;
+    changedMs = now;
+    return;
+  }
+  if (level == pressed || now - changedMs < TRIGGER_DEBOUNCE_MS)
+  {
+    return;
+  }
+  pressed = level;
+  if (!pressed)
+  {
+    return;
+  }
+  const sequencer::Status status = sequencer::status();
+  if (!status.running && status.loaded)
+  {
+    sequencer::start();
+  }
 }
 
 /**
@@ -328,6 +397,14 @@ void processBuffer(DataBuffer* cmd)
   {
     shootCommand(cmd);
   }
+  else if (cmdId == SET_OUTPUTS_CMD)
+  {
+    setOutputsCommand(cmd);
+  }
+  else if (cmdId == STOP_CMD)
+  {
+    stopCommand(cmd);
+  }
   else
   {
     returnCommandError(MALFORMED_ERR);
@@ -343,6 +420,7 @@ void setup()
   pinMode(CLOCK_PIN, OUTPUT);
   pinMode(DATA_PIN, OUTPUT);
   pinMode(LATCH_PIN, OUTPUT);
+  pinMode(TRIGGER_PIN, INPUT);  // Pulled down on the board, by R2.
   digitalWrite(CLOCK_PIN, LOW);
   digitalWrite(DATA_PIN, LOW);
   clearOutputs();
@@ -355,4 +433,5 @@ void setup()
 void loop()
 {
   serialPort.update();  // Read/write serial port data.
+  updateTrigger();
 }

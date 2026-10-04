@@ -35,14 +35,13 @@
 namespace freezer_driver
 {
 /**
- * The answer to LoadSequence: the checksum and the duration of the sequence,
- * as the controller computed them.
+ * The answer to LoadSequence: the duration of the sequence, as the controller
+ * computed it.
  */
 struct LoadSequenceResponse : public Response
 {
   using Response::Response;
 
-  uint16_t checksum = 0;
   uint32_t duration_us = 0;
 };
 }  // namespace freezer_driver

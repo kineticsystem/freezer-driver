@@ -32,6 +32,7 @@
 
 #include <freezer_driver/msgs/info_response.hpp>
 #include <freezer_driver/msgs/load_sequence_response.hpp>
+#include <freezer_driver/msgs/response.hpp>
 #include <freezer_driver/msgs/shoot_response.hpp>
 #include <freezer_driver/msgs/status_response.hpp>
 #include <freezer_driver/sequence.hpp>
@@ -76,10 +77,22 @@ public:
 
   /**
    * @brief Fire the loaded sequence.
-   * @param checksum The checksum of the sequence the caller means: the
-   * controller refuses to fire another one.
    */
-  virtual ShootResponse shoot(uint16_t checksum) = 0;
+  virtual ShootResponse shoot() = 0;
+
+  /**
+   * @brief Latch a pattern on the 16 outputs, e.g. to switch the lights on or
+   * off, where it stays until the next one, a shot, or stop(). Refused as busy
+   * while a shot runs: the shot owns the outputs.
+   */
+  virtual Response set_outputs(uint16_t outputs) = 0;
+
+  /**
+   * @brief End the running shot where it is, if any, and switch every output
+   * off. Always accepted. The shot keeps its id, and the controller reads
+   * idle, as after a shot that ran to its end.
+   */
+  virtual Response stop() = 0;
 
   /**
    * @brief Request the state of the controller and of the last shot.

@@ -31,6 +31,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
     freezer_msgs
     rclcpp
     rclcpp_action
+    std_srvs
 )
 
 find_package(ament_cmake REQUIRED)

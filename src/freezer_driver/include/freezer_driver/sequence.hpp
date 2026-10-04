@@ -83,13 +83,6 @@ public:
    */
   std::vector<uint8_t> encode() const;
 
-  /**
-   * The CRC-16 of the encoded sequence. The controller computes the same, and
-   * Shoot carries it so that the controller never fires a table the host did
-   * not mean.
-   */
-  uint16_t checksum() const;
-
   bool operator==(const Sequence&) const = default;
 
 private:

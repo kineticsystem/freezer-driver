@@ -38,6 +38,7 @@
 #include <freezer_driver/default_driver.hpp>
 #include <freezer_driver/fake/fake_driver.hpp>
 #include <freezer_driver/recipes.hpp>
+#include <freezer_driver/synchronized_driver.hpp>
 
 namespace freezer_node
 {
@@ -83,6 +84,8 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
   {
     driver_ = create_driver();
   }
+  // The services call the driver while the shot's thread polls it.
+  driver_ = std::make_unique<freezer_driver::SynchronizedDriver>(std::move(driver_));
   connect();
 
   // poll_period and end_margin are read here, once.
@@ -105,6 +108,15 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
       },
       [this](std::shared_ptr<GoalHandle> goal_handle) { return handle_cancel(std::move(goal_handle)); },
       [this](std::shared_ptr<GoalHandle> goal_handle) { handle_accepted(std::move(goal_handle)); });
+
+  set_outputs_service_ =
+      create_service<SetOutputs>("~/set_outputs", [this](const std::shared_ptr<SetOutputs::Request> request,
+                                                         std::shared_ptr<SetOutputs::Response> response) {
+        handle_set_outputs(request, response);
+      });
+  stop_service_ =
+      create_service<Trigger>("~/stop", [this](const std::shared_ptr<Trigger::Request>,
+                                               std::shared_ptr<Trigger::Response> response) { handle_stop(response); });
 }
 
 FreezerNode::~FreezerNode()
@@ -316,10 +328,19 @@ void FreezerNode::execute(const std::shared_ptr<GoalHandle>& goal_handle)
     freezer_driver::ShotRunner::Callbacks callbacks;
     callbacks.start = [this] {
       std::lock_guard lock{ start_mutex_ };
-      started_ = !cancel_requested_;
+      started_ = !cancel_requested_ && !stop_requested_;
       return started_;
     };
     callbacks.started = [&](uint16_t shot_id, uint32_t duration_us) {
+      {
+        // A stop that came between the check above and Shoot found nothing
+        // to stop: stop the shot now.
+        std::lock_guard lock{ start_mutex_ };
+        if (stop_requested_)
+        {
+          driver_->stop();
+        }
+      }
       result->started = now();
       feedback->state = Shoot::Feedback::RUNNING;
       feedback->shot_id = shot_id;
@@ -338,6 +359,22 @@ void FreezerNode::execute(const std::shared_ptr<GoalHandle>& goal_handle)
     // The parameters of the sequence changed since the goal was accepted.
     shot.outcome = Outcome::Aborted;
     shot.message = ex.what();
+  }
+
+  {
+    // A stopped shot ends as one that ran to its end, or as one canceled
+    // before it started: the node alone knows it was stopped.
+    std::lock_guard lock{ start_mutex_ };
+    if (stop_requested_ && shot.outcome == Outcome::Succeeded)
+    {
+      shot.outcome = Outcome::Aborted;
+      shot.message = "Stopped.";
+    }
+    else if (stop_requested_ && shot.outcome == Outcome::Canceled && !cancel_requested_)
+    {
+      shot.outcome = Outcome::Aborted;
+      shot.message = "Stopped before the shot started.";
+    }
   }
 
   result->message = shot.message;
@@ -367,6 +404,68 @@ void FreezerNode::execute(const std::shared_ptr<GoalHandle>& goal_handle)
   std::lock_guard lock{ start_mutex_ };
   started_ = false;
   cancel_requested_ = false;
+  stop_requested_ = false;
   busy_ = false;
+}
+
+void FreezerNode::handle_set_outputs(const std::shared_ptr<SetOutputs::Request>& request,
+                                     const std::shared_ptr<SetOutputs::Response>& response)
+{
+  if (!connected_)
+  {
+    response->message = "No Freezer controller.";
+    return;
+  }
+  try
+  {
+    const Response answer = driver_->set_outputs(request->outputs);
+    response->success = answer.success();
+    if (!answer.success())
+    {
+      response->message = "The controller refused the outputs: " + to_string(answer.reason()) + ".";
+    }
+  }
+  catch (const std::exception& ex)
+  {
+    response->message = ex.what();
+  }
+  if (!response->success)
+  {
+    RCLCPP_WARN(get_logger(), "Outputs not set: %s", response->message.c_str());
+  }
+}
+
+void FreezerNode::handle_stop(const std::shared_ptr<Trigger::Response>& response)
+{
+  if (!connected_)
+  {
+    response->message = "No Freezer controller.";
+    return;
+  }
+  {
+    // The goal running, if any, aborts; a goal accepted after the stop runs.
+    std::lock_guard lock{ start_mutex_ };
+    if (busy_)
+    {
+      stop_requested_ = true;
+    }
+  }
+  try
+  {
+    const Response answer = driver_->stop();
+    response->success = answer.success();
+    if (!answer.success())
+    {
+      response->message = "The controller refused to stop: " + to_string(answer.reason()) + ".";
+    }
+  }
+  catch (const std::exception& ex)
+  {
+    response->message = ex.what();
+  }
+  if (!response->success)
+  {
+    RCLCPP_ERROR(get_logger(), "Stop failed: %s", response->message.c_str());
+  }
 }
 }  // namespace freezer_node

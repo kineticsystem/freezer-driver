@@ -56,7 +56,9 @@ public:
   void disconnect() override;
   InfoResponse get_info() override;
   LoadSequenceResponse load_sequence(const Sequence& sequence) override;
-  ShootResponse shoot(uint16_t checksum) override;
+  ShootResponse shoot() override;
+  Response set_outputs(uint16_t outputs) override;
+  Response stop() override;
   StatusResponse get_status() override;
 
 private:

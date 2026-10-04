@@ -39,23 +39,17 @@ ShotRunner::ShotRunner(Driver& driver, Config config, Clock clock, Sleep sleep)
 
 void ShotRunner::load(const Sequence& sequence)
 {
-  const uint16_t checksum = sequence.checksum();
-  if (loaded_checksum_ == checksum)
+  if (loaded_ == sequence)
   {
     return;
   }
-  loaded_checksum_.reset();
+  loaded_.reset();
   const auto response = driver_.load_sequence(sequence);
   if (!response.success())
   {
     throw std::runtime_error("The controller refused the sequence: " + to_string(response.reason()) + ".");
   }
-  if (response.checksum != checksum)
-  {
-    throw std::runtime_error("The controller computed the checksum " + std::to_string(response.checksum) +
-                             " for a sequence whose checksum is " + std::to_string(checksum) + ".");
-  }
-  loaded_checksum_ = checksum;
+  loaded_ = sequence;
 }
 
 ShotRunner::Result ShotRunner::run(const Sequence& sequence)
@@ -68,8 +62,6 @@ ShotRunner::Result ShotRunner::run(const Sequence& sequence, const Callbacks& ca
   Result result;
   try
   {
-    const uint16_t checksum = sequence.checksum();
-
     ShootResponse shot;
     for (int attempt = 0;; ++attempt)
     {
@@ -80,15 +72,15 @@ ShotRunner::Result ShotRunner::run(const Sequence& sequence, const Callbacks& ca
         result.message = "Canceled before the shot started.";
         return result;
       }
-      shot = driver_.shoot(checksum);
+      shot = driver_.shoot();
       if (shot.success())
       {
         break;
       }
       // The controller lost the sequence, e.g. after a reset: load it again,
       // once.
-      const bool lost = shot.reason() == Response::Reason::NoTable || shot.reason() == Response::Reason::WrongTable;
-      loaded_checksum_.reset();
+      const bool lost = shot.reason() == Response::Reason::NoTable;
+      loaded_.reset();
       if (!lost || attempt > 0)
       {
         throw std::runtime_error("The controller refused the shot: " + to_string(shot.reason()) + ".");
@@ -120,7 +112,7 @@ ShotRunner::Result ShotRunner::run(const Sequence& sequence, const Callbacks& ca
       }
       else
       {
-        loaded_checksum_.reset();
+        loaded_.reset();
         throw std::runtime_error("The controller lost shot " + std::to_string(shot.shot_id) + ": it may have reset.");
       }
       if (clock_() > deadline)

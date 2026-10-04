@@ -46,6 +46,8 @@ namespace freezer_node::test
 {
 using freezer_driver::FakeDriver;
 using Shoot = freezer_msgs::action::Shoot;
+using SetOutputs = freezer_msgs::srv::SetOutputs;
+using Trigger = std_srvs::srv::Trigger;
 using ResultCode = rclcpp_action::ResultCode;
 using namespace std::chrono_literals;
 
@@ -82,10 +84,14 @@ protected:
     node = std::make_shared<FreezerNode>(options, std::move(driver));
     client_node = std::make_shared<rclcpp::Node>("client");
     client = rclcpp_action::create_client<Shoot>(client_node, "/freezer/shoot");
+    set_outputs_client = client_node->create_client<SetOutputs>("/freezer/set_outputs");
+    stop_client = client_node->create_client<Trigger>("/freezer/stop");
     executor.add_node(node);
     executor.add_node(client_node);
     spinner = std::thread{ [this] { executor.spin(); } };
     ASSERT_TRUE(client->wait_for_action_server(5s));
+    ASSERT_TRUE(set_outputs_client->wait_for_service(5s));
+    ASSERT_TRUE(stop_client->wait_for_service(5s));
   }
 
   void TearDown() override
@@ -118,6 +124,42 @@ protected:
     return future.get();
   }
 
+  /**
+   * Wait for the feedback that the shot has started: the fake driver is
+   * the node's while a shot runs, the test must not read it.
+   */
+  bool wait_running()
+  {
+    for (int i = 0; i < 5'000; ++i)
+    {
+      {
+        std::lock_guard lock{ mutex };
+        if (std::find(states.begin(), states.end(), Shoot::Feedback::RUNNING) != states.end())
+        {
+          return true;
+        }
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
+  SetOutputs::Response set_outputs(uint16_t outputs)
+  {
+    auto request = std::make_shared<SetOutputs::Request>();
+    request->outputs = outputs;
+    auto future = set_outputs_client->async_send_request(request);
+    EXPECT_EQ(future.wait_for(5s), std::future_status::ready);
+    return *future.get();
+  }
+
+  Trigger::Response stop()
+  {
+    auto future = stop_client->async_send_request(std::make_shared<Trigger::Request>());
+    EXPECT_EQ(future.wait_for(5s), std::future_status::ready);
+    return *future.get();
+  }
+
   static Shoot::Goal raw_goal(std::vector<std::pair<uint16_t, uint32_t>> steps)
   {
     Shoot::Goal goal;
@@ -136,6 +178,8 @@ protected:
   std::shared_ptr<FreezerNode> node;
   rclcpp::Node::SharedPtr client_node;
   rclcpp_action::Client<Shoot>::SharedPtr client;
+  rclcpp::Client<SetOutputs>::SharedPtr set_outputs_client;
+  rclcpp::Client<Trigger>::SharedPtr stop_client;
   rclcpp::executors::SingleThreadedExecutor executor;
   std::thread spinner;
   std::mutex mutex;
@@ -214,6 +258,71 @@ TEST_F(TestFreezerNode, abort_when_the_shot_never_ends)
   const auto wrapped = result(handle);
   EXPECT_EQ(wrapped.code, ResultCode::ABORTED);
   EXPECT_THAT(wrapped.result->message, ::testing::HasSubstr("did not end"));
+}
+
+/** The lights stay on until switched off. */
+TEST_F(TestFreezerNode, set_outputs)
+{
+  const auto response = set_outputs(0xC000);
+  EXPECT_TRUE(response.success) << response.message;
+  EXPECT_EQ(fake->outputs(), 0xC000);
+  EXPECT_TRUE(set_outputs(0x0000).success);
+  EXPECT_EQ(fake->outputs(), 0x0000);
+}
+
+/** The shot owns the outputs: setting them during it is refused. */
+TEST_F(TestFreezerNode, set_outputs_refused_during_a_shot)
+{
+  auto handle = send(raw_goal({ { 0x0003, 300'000 }, { 0x0000, 1'000 } }));
+  ASSERT_TRUE(handle);
+  ASSERT_TRUE(wait_running());
+  const auto response = set_outputs(0xC000);
+  EXPECT_FALSE(response.success);
+  EXPECT_THAT(response.message, ::testing::HasSubstr("a shot is running"));
+  EXPECT_EQ(result(handle).code, ResultCode::SUCCEEDED);
+}
+
+/** A stop ends the shot at once, and its goal aborts. */
+TEST_F(TestFreezerNode, stop_a_shot)
+{
+  auto handle = send(raw_goal({ { 0x0003, 2'000'000 }, { 0x0000, 1'000 } }));
+  ASSERT_TRUE(handle);
+  ASSERT_TRUE(wait_running());
+  EXPECT_TRUE(stop().success);
+
+  const auto wrapped = result(handle);
+  EXPECT_EQ(wrapped.code, ResultCode::ABORTED);
+  EXPECT_EQ(wrapped.result->message, "Stopped.");
+  EXPECT_EQ(fake->outputs(), 0x0000);
+  EXPECT_EQ(fake->timeline().back().outputs, 0x0000);
+  EXPECT_LT(fake->timeline().back().time - fake->timeline().front().time, std::chrono::microseconds{ 1'000'000 });
+
+  // The next shot runs.
+  auto next = send(Shoot::Goal{});
+  ASSERT_TRUE(next);
+  EXPECT_EQ(result(next).code, ResultCode::SUCCEEDED);
+}
+
+TEST_F(TestFreezerNode, stop_switches_the_outputs_off)
+{
+  set_outputs(0xC000);
+  EXPECT_TRUE(stop().success);
+  EXPECT_EQ(fake->outputs(), 0x0000);
+}
+
+/** A shot fired by IN1 owns the controller: a goal meanwhile aborts. */
+TEST_F(TestFreezerNode, abort_during_a_shot_of_the_trigger)
+{
+  auto first = send(raw_goal({ { 0x0003, 1'000 }, { 0x0000, 2'000'000 } }));
+  ASSERT_TRUE(first);
+  ASSERT_EQ(result(first).code, ResultCode::SUCCEEDED);
+  ASSERT_TRUE(fake->trigger());
+
+  auto second = send(raw_goal({ { 0x0003, 1'000 }, { 0x0000, 2'000'000 } }));
+  ASSERT_TRUE(second);
+  const auto wrapped = result(second);
+  EXPECT_EQ(wrapped.code, ResultCode::ABORTED);
+  EXPECT_THAT(wrapped.result->message, ::testing::HasSubstr("a shot is running"));
 }
 
 }  // namespace freezer_node::test

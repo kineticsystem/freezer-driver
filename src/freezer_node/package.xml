@@ -16,6 +16,7 @@
   <depend>freezer_msgs</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
+  <depend>std_srvs</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
