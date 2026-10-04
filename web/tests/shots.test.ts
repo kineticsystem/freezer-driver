@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { applyShotMessage, MAX_SHOTS, ShotEvent, ShotSource, type ShotMessage } from '../src/freezer/freezer';
+import {
+  applyShotMessage,
+  END_GRACE_MS,
+  isRunning,
+  MAX_SHOTS,
+  ShotEvent,
+  ShotSource,
+  type ShotMessage,
+} from '../src/freezer/freezer';
 
 const STEPS = [
   { outputs: 3, hold_us: 1_000 },
@@ -79,5 +87,15 @@ describe('the shots of the topic', () => {
     }
     expect(shots).toHaveLength(MAX_SHOTS);
     expect(shots[shots.length - 1].id).toBe(MAX_SHOTS + 5);
+  });
+
+  /** A page that misses the end of a shot must not keep its commands disabled forever. */
+  it('stops believing a shot runs long past its duration', () => {
+    const [shot] = applyShotMessage([], message(ShotEvent.STARTED), 1_000);
+    expect(isRunning(shot, 1_000)).toBe(true);
+    expect(isRunning(shot, 1_000 + 3 + END_GRACE_MS - 1)).toBe(true);
+    expect(isRunning(shot, 1_000 + 3 + END_GRACE_MS)).toBe(false);
+    const [ended] = applyShotMessage([shot], message(ShotEvent.ENDED), 1_002);
+    expect(isRunning(ended, 1_002)).toBe(false);
   });
 });

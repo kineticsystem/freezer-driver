@@ -723,12 +723,12 @@ flowchart LR
 | File | Role |
 |---|---|
 | `src/ros/rosbridge.ts` | The connection: topics, service calls and action goals over the rosbridge protocol. It reconnects by itself, and subscribes again after a reconnection. |
-| `src/freezer/freezer.ts` | The node as the page sees it: a store of the last 50 shots, built from `~/shots`, and one method per command. React reads it with `useSyncExternalStore`. |
+| `src/freezer/freezer.ts` | The node as the page sees it: a store of the outputs, from `~/outputs`, and of the last shots, from `~/shots`, and one method per command. React reads it with `useSyncExternalStore`. |
 | `src/freezer/board.ts` | The 16 lines and their bits, the rows of the timing diagram. |
 | `src/freezer/timeline.ts` | When each line is on during a shot, from its table: the spans, the step at a time, the ticks of the axis. |
-| `src/components` | The commands, and the shots with their timing diagram. |
+| `src/components` | The commands, and the timing diagram: a row per line, with its LED lit as `~/outputs` tells it, and the trace of the latest shot. |
 
-The timing diagram is plain SVG: a row per line, high while it is closed, as a logic analyser draws it. It draws the shot from its table, so it shows what the controller was told to do, to the microsecond, not a measurement of what it did; the worst lateness, which the controller measures, is shown next to it. A running shot has a cursor, which advances on the page's own clock from the moment its start arrived, so that a host on another clock does not move it. A stopped shot is cut where it stopped.
+The timing diagram is plain SVG: a row per line, high while it is closed, as a logic analyser draws it. The rows are named after the contacts of the plug, e.g. `OUT1 ring` and `OUT1 tip`, not after a device: the jacks are all alike, and only the sequence decides that one drives a camera, whose ring is its focus and tip its shutter, and another a flash. It draws the shot from its table, so it shows what the controller was told to do, to the microsecond, not a measurement of what it did; the worst lateness, which the controller measures, is in the result of the action and on `~/shots`. A running shot has a cursor, which advances on the page's own clock from the moment its start arrived, so that a host on another clock does not move it. A stopped shot is cut where it stopped. A shot whose end never reaches the page, e.g. after a lost connection, counts as running for its duration and 2 s more, `END_GRACE_MS`, and then no more: the page disables the commands while a shot runs, and must not keep them disabled forever.
 
 ## Safety Nets
 
@@ -785,7 +785,7 @@ The firmware has no automated test. The timing, the microseconds between latches
 
 **An action for the shot, services for the outputs and the stop.** A shot has a start, a progress and an end, which is what a ROS2 action is for: a client can move a rail, wait for it to settle, send a goal and wait for its result. Setting the outputs and stopping are immediate, so a service, which answers at once, fits them better. `ros2_control` does not fit: there is no joint and no control loop.
 
-**A page to see the board, not RViz or PlotJuggler.** A URDF in RViz moves links from joint states, but their colours are fixed, so it cannot light a switch. PlotJuggler draws a timing diagram, but cannot fire a shot. A page can do both, looks like the board, and works the same against the fake controller and the real one. It draws the shots only: their timing shows what the outputs did, and `~/outputs` remains for other tools.
+**A page to see the board, not RViz or PlotJuggler.** A URDF in RViz moves links from joint states, but their colours are fixed, so it cannot light a switch. PlotJuggler draws a timing diagram, but cannot fire a shot. A page can do both, looks like the board, and works the same against the fake controller and the real one. It draws the latest shot, whose timing shows what the outputs did, with an LED on each row showing the line as it is now, which also shows what no shot does, e.g. All on. During a shot, the LEDs show the shot's table at the cursor rather than `~/outputs`: the node learns each step when it polls the controller, at another moment than the cursor reaches it, and the two would disagree for a few milliseconds at each boundary, tens on the board.
 
 **The timing diagram is drawn from the table.** Stamping each change when its message reaches the page would draw a 100 ms step as anything between 97 and 104 ms. The controller runs the table exactly, so the table and the confirmed start are the truth, to the microsecond; `~/outputs`, coarser, only lights the board.
 

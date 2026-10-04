@@ -1,6 +1,6 @@
-// The Freezer node, as the page sees it through rosbridge: the shots, from the
-// topic shots, and the commands, the Shoot action and the services
-// set_outputs, stop and fake/press_trigger.
+// The Freezer node, as the page sees it through rosbridge: the shots and the
+// outputs, from the topics shots and outputs, and the commands, the Shoot
+// action and the services set_outputs, stop and fake/press_trigger.
 
 import { Rosbridge, type ActionResult, type Status } from '../ros/rosbridge';
 import type { Step } from './timeline';
@@ -11,6 +11,14 @@ export const NODE = '/freezer';
 export interface Time {
   sec: number;
   nanosec: number;
+}
+
+/** freezer_msgs/Outputs. */
+export interface OutputsMessage {
+  stamp: Time;
+  outputs: number;
+  shot_id: number;
+  step: number;
 }
 
 export const ShotEvent = { STARTED: 0, ENDED: 1, STOPPED: 2, FAILED: 3 } as const;
@@ -58,12 +66,34 @@ export interface ShootResult {
 
 export interface FreezerState {
   status: Status;
+  /** The pattern on the outputs, as the node last told it; undefined until it does. */
+  outputs?: number;
   /** The shots received, oldest first. */
   shots: Shot[];
 }
 
-/** How many shots the page keeps. */
-export const MAX_SHOTS = 50;
+/**
+ * How many shots the page keeps: it shows the latest, and keeps a few more to
+ * match each end to its start.
+ */
+export const MAX_SHOTS = 10;
+
+/**
+ * How long after the end of its duration the page waits for the end of a
+ * shot. A page that misses it, e.g. after a lost connection, would otherwise
+ * believe the shot runs forever, and keep the commands disabled.
+ */
+export const END_GRACE_MS = 2000;
+
+/** Until when the page believes a shot without an end runs, in ms since the epoch, browser time. */
+export function runningUntil(shot: Shot): number {
+  return shot.receivedMs + shot.durationUs / 1000 + END_GRACE_MS;
+}
+
+/** Whether a shot runs: started, not ended, and not long past its duration. */
+export function isRunning(shot: Shot, nowMs: number): boolean {
+  return shot.state === 'running' && nowMs < runningUntil(shot);
+}
 
 const STATES: Record<number, ShotState> = {
   [ShotEvent.ENDED]: 'ended',
@@ -119,6 +149,11 @@ export class Freezer {
   constructor(readonly ros: Rosbridge) {
     this.state = { status: ros.getStatus(), shots: [] };
     this.stops.push(ros.onStatus((status) => this.update({ status })));
+    this.stops.push(
+      ros.subscribe<OutputsMessage>(`${NODE}/outputs`, 'freezer_msgs/msg/Outputs', (message) =>
+        this.update({ outputs: message.outputs }),
+      ),
+    );
     this.stops.push(
       ros.subscribe<ShotMessage>(`${NODE}/shots`, 'freezer_msgs/msg/Shot', (message) =>
         this.update({ shots: applyShotMessage(this.state.shots, message, Date.now()) }),
