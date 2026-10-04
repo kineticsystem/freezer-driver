@@ -11,6 +11,7 @@
 - [The Shot](#the-shot)
   - [A Shot Is a Table of Steps](#a-shot-is-a-table-of-steps)
   - [Load, Then Trigger](#load-then-trigger)
+  - [Lights, Stop and the Trigger](#lights-stop-and-the-trigger)
   - [Richer Steps](#richer-steps)
   - [What the Firmware Rejects](#what-the-firmware-rejects)
   - [Recipes on the Host](#recipes-on-the-host)
@@ -54,6 +55,9 @@ This document collects ideas, and the decisions taken so far are listed in [Deci
 - **The host polls, Ideas 2 and 1.** `ShotResponse` returns at once with the shot id and the duration; the host waits that long and polls the status until the shot is done. The two-answer protocol of Idea 6 is not used.
 - **The StepIt protocol, unchanged.** One request, one response, the same framing and CRC-16, no sequence number, no link-layer acknowledgement. The code is reused: `framed_serial` on the host, `SerialPort`, `DataBuffer`, `CrcUtils` and `Guard` in the firmware.
 - **A table of steps, loaded, then fired.** `LoadSequence` sends the table, each step a 16-bit output bitmask and a hold time; `Shoot` fires the loaded table. See [A First Draft of the Protocol](#a-first-draft-of-the-protocol).
+- **The shot owns the outputs; lights and stop beside it.** `SetOutputs` switches outputs on or off, e.g. the lights, outside a shot; `Stop` ends a shot at once. During a shot, every command that would move an output is answered "busy", except `Stop`. IN1 fires the loaded table, unless a shot runs or no table is loaded. See [Lights, Stop and the Trigger](#lights-stop-and-the-trigger).
+- **No checksum of the table.** `Shoot` fires whatever table is loaded, and the host keeps track of what it loaded. One host owns the port, so the checksum only guarded against that host's own mistakes. Dropping it changes the wire, so it comes with version `2.0.0`, together with `SetOutputs` and `Stop`. **Not implemented yet:** the firmware `1.1.0` and the driver still carry it. See [A First Draft of the Protocol](#a-first-draft-of-the-protocol).
+- **No watchdog.** Unlike StepIt, which must stop its motors when the host goes silent, the controller keeps its outputs as they are: a shot runs to its end and switches everything off by itself, and what `SetOutputs` set stays until it is changed, `Stop`, or a reset. Opening the port resets the Nano, so a host that restarts finds every output off. See [Safety](#safety).
 - **A handshake and a version, as in StepIt.** `connect()` sends `Info`; the controller answers with its version, major, minor and patch, and the name `FREEZER`. The driver refuses another name or another major version. See [The Handshake](#the-handshake).
 
 ## What We Start From
@@ -128,13 +132,36 @@ A simpler alternative is a fixed sequence with four durations and a camera mask.
 
 ### Load, Then Trigger
 
-The table can travel in its own command instead of inside the shot. A `LoadSequence` command sends the table once; the firmware validates it and keeps it. A `Shoot` command of 3 bytes fires the stored table.
+The table can travel in its own command instead of inside the shot. A `LoadSequence` command sends the table once; the firmware validates it and keeps it. A `Shoot` command of a single byte fires the stored table.
 
 - **The shot starts sooner.** The frame that starts it is short, and the validation has already happened.
 - **The same table is fired many times.** A focus stack of 200 shots sends the table once.
 - **The remote trigger can use it.** IN1 can fire the stored table, so the button and ROS2 shoot the same way.
 
-The price is state in the controller: the host must know which table is loaded. The `LoadSequence` answer can return a checksum of the table, and the `ShotResponse` the same checksum, so the host can tell that the table it meant is the one that ran.
+The price is state in the controller: the host must know which table is loaded. It remembers the last table it loaded, and forgets it when it connects, since the Nano resets when the port opens, and when the controller answers "no table". A checksum of the table, returned by `LoadSequence` and sent back by `Shoot`, would let the controller refuse a table the host did not mean; we dropped it, see [Decisions](#decisions).
+
+### Lights, Stop and the Trigger
+
+Besides the shot, we want to switch the lights on and off, stop whatever runs, and test the cameras. The lights, like the cameras, are powered by circuits of their own: an optocoupler only closes their switch, so a light is one or two bits of the 16, like a camera.
+
+**Why not a table sent with the command.** Since what is critical is how precisely the shot runs, not how soon it starts, we considered dropping `LoadSequence` for one command carrying its table, `Run(table)`: every use, the shot, a lights test, a camera test, would send its own table and leave no state behind. The few milliseconds the bigger frame takes are irrelevant, since Timer1 keeps the timing of the steps whichever way the table arrived. We kept the load instead, for IN1: a button has no table to send, so the controller must hold the one it fires. The loaded table is therefore **the shot**, whoever fires it, ROS2 or the button.
+
+What changes nothing in the loaded table gets a command of its own:
+
+| Action | How |
+|---|---|
+| Shoot from ROS2 | `Shoot`, as before |
+| Shoot from IN1 | fires the loaded table, unless a shot runs or no table is loaded |
+| Lights on or off | `SetOutputs`, a 16-bit mask that stays until changed; it leaves the loaded table alone |
+| Stop | `Stop`, always accepted: ends a running shot, writes `0x0000` |
+| Test the cameras | fire the shot; to test them one by one, load a test table, then the shot again |
+
+The rules:
+
+- **The shot owns all 16 outputs.** It is the priority: while it runs, `SetOutputs`, `LoadSequence` and `Shoot` are answered "busy", and only `Stop` can end it. The protocol is strict request and response, so the controller must answer something, and "busy" tells the host that its outputs did not change.
+- **A shot ends with every output off,** lights included: a light set by `SetOutputs` before the shot is off after it. A shot that needs light has the light's bits in its steps, timed by Timer1 like the rest, as the timed light of StepIt Old does. The host sends `SetOutputs` again after the shot to have the lights back.
+- **IN1 is for testing,** and stays simple: no arming, no setting to disable it, nothing sent to the host. It fires the loaded table unless a shot is running or no table is loaded, which is the case after every connection, since the Nano resets when the port opens. A button that bounces does not fire twice: the bounces arrive while the shot runs. A shot fired by IN1 still takes a shot id, which the host reads with `Status` if it cares, see [Shots the Node Did Not Ask For](#shots-the-node-did-not-ask-for). A `Shoot` from the host during it is answered "busy".
+- **A strobe is dropped.** It needs a repeat step, or more than the 16 steps that fit, and a strobe that runs until stopped breaks the limit on the duration. It was only an example.
 
 ### Richer Steps
 
@@ -257,7 +284,7 @@ flowchart TB
 
 With the timer driving the steps, `loop()` stays free and keeps serving the serial port during the shot. That gives the controller three choices for a request that arrives mid-shot:
 
-- **Answer queries, refuse commands.** A status or info query is answered; a second `ShootCommand` gets a "busy" error. This is the choice that makes polling possible.
+- **Answer queries, refuse commands.** A status or info query is answered; a second `ShootCommand` gets a "busy" error. This is the choice that makes polling possible. `Stop` is the one command accepted, see [Lights, Stop and the Trigger](#lights-stop-and-the-trigger).
 - **Answer nothing.** The host must not send during a shot. Simple, but the host then needs to know the duration, and the watchdog must be suspended.
 - **Queue the next shot.** Useful for a burst, but it is a feature we do not need yet.
 
@@ -503,23 +530,25 @@ The framing, the CRC-16 and the byte order, most significant byte first, are tho
 | Id | Command | Request payload | Success payload |
 |---|---|---|---|
 | `0x76` | `Info` | none | version, limits and the name `FREEZER`, see [The Handshake](#the-handshake) |
-| `0x75` | `Status` | none | state, 1 byte; loaded table checksum, 2 bytes; last shot id, 2 bytes; current step, 1 byte; elapsed, 4 bytes in µs; worst lateness of the last shot, 4 bytes in µs |
-| `0x7B` | `LoadSequence` | step count, 1 byte; then per step: type, 1 byte; bitmask, 2 bytes; hold, 4 bytes in µs | table checksum, 2 bytes; total duration, 4 bytes in µs |
-| `0x7C` | `Shoot` | expected table checksum, 2 bytes | shot id, 2 bytes; total duration, 4 bytes in µs |
+| `0x75` | `Status` | none | state, 1 byte; last shot id, 2 bytes; current step, 1 byte; elapsed, 4 bytes in µs; worst lateness of the last shot, 4 bytes in µs |
+| `0x7B` | `LoadSequence` | step count, 1 byte; then per step: type, 1 byte; bitmask, 2 bytes; hold, 4 bytes in µs | total duration, 4 bytes in µs |
+| `0x7C` | `Shoot` | none | shot id, 2 bytes; total duration, 4 bytes in µs |
 | `0x79` | `Echo` | anything | the same bytes |
+| `0x77` | `SetOutputs` | bitmask, 2 bytes | none |
+| `0x78` | `Stop` | none | none |
 
 - **Ids.** `Info`, `Status` and `Echo` keep their StepIt ids, and `Shoot` keeps the id it had in StepIt Old. A StepIt controller on the wrong port answers `Info` with the name `STEPIT` and is refused.
 - **The step.** Type `0x00` is "set and hold"; the other values are reserved for [Richer Steps](#richer-steps). The bitmask is the 16 outputs, bit 0 being OUT1 shutter, see [The Freezer Board](#the-freezer-board). A step is 7 bytes, and 16 steps make a payload of 114 bytes, 116 with the CRC, under the 200 bytes of the StepIt receive buffer, which keeps the bytes unescaped.
-- **The checksum.** `LoadSequence` returns the CRC-16 of the table, and `Shoot` sends it back. The controller refuses to shoot a table other than the one the host means, e.g. after a reset that cleared it.
+- **No checksum.** Version `1.1.0` had `LoadSequence` return the CRC-16 of the table, and `Shoot` send it back, so that the controller refused to fire a table other than the one the host meant: a test table the shot was not loaded again after, or a table whose `LoadSequence` answer was lost. `Status` returned it too. With one host on the port, these are mistakes of that host, which it avoids by remembering what it loaded, so version `2.0.0` drops the checksum from the three commands, and the error "wrong table" with it. The CRC-16 of every frame, which checks the link, stays.
+- **`SetOutputs` and `Stop`.** `SetOutputs` writes its mask at once and keeps it until the next one, a shot, or `Stop`. `Stop` writes `0x0000` and, during a shot, stops Timer1: the shot ends where it was, and `Status` reads idle with its shot id. Added in `2.0.0`, with the removal of the checksum, which changes the wire.
 - **The state.** `0x00` idle, `0x01` running. A shot is over for the host when the state is idle and the last shot id is the one `Shoot` returned.
 
 | Error reason | When |
 |---|---|
 | `0x01` malformed | the payload has the wrong length or an unknown command id |
 | `0x02` invalid table | the table breaks a rule of [What the Firmware Rejects](#what-the-firmware-rejects) |
-| `0x03` busy | `LoadSequence` or `Shoot` while a shot runs |
+| `0x03` busy | `LoadSequence`, `Shoot` or `SetOutputs` while a shot runs |
 | `0x04` no table | `Shoot` before any table is loaded |
-| `0x05` wrong table | the checksum of `Shoot` is not the one of the loaded table |
 
 ### The Handshake
 
@@ -558,8 +587,8 @@ The firmware and the driver live in the same repository, so a change of the wire
 
 ### A Shot from the Host
 
-1. `LoadSequence` once, keep the checksum and the duration.
-2. `Shoot` with the checksum, keep the shot id.
+1. `LoadSequence` once, keep the duration, and remember the table as loaded.
+2. `Shoot`, keep the shot id.
 3. Wait for the duration.
 4. `Status` every 10 ms until it is idle with that shot id, or fail after the duration plus 100 ms.
 
@@ -654,7 +683,7 @@ The hold is a `uint32` in microseconds, not a `builtin_interfaces/Duration`: it 
 |---|---|
 | `handle_goal` | rejects the goal when the driver is not connected, when a goal is already active, or when the table breaks a rule of the limits read at the handshake; accepts and executes it otherwise |
 | `handle_cancel` | accepts while `LOADING`, rejects once `RUNNING`: a shot that has started always runs to the end |
-| execution | hands the table to `ShotRunner`, which loads it when its checksum differs from the loaded one, sends `Shoot`, and polls the status until the controller is idle with the shot id; publishes `RUNNING` and the progress as feedback, and succeeds, or aborts with a `message` on an error or a timeout |
+| execution | hands the table to `ShotRunner`, which loads it when it differs from the table it loaded last, sends `Shoot`, and polls the status until the controller is idle with the shot id; publishes `RUNNING` and the progress as feedback, and succeeds, or aborts with a `message` on an error or a timeout |
 
 A rejection carries no reason in ROS2, so the node logs it, and the rules are the ones `Info` reported, which a client can read too. Validating in `handle_goal` costs no serial traffic: the limits are known since the handshake.
 
@@ -725,9 +754,9 @@ sequenceDiagram
     Node-->>Client: feedback LOADING
     opt another table is loaded
         Node->>MCU: LoadSequence
-        MCU-->>Node: checksum, duration
+        MCU-->>Node: duration
     end
-    Node->>MCU: Shoot, checksum
+    Node->>MCU: Shoot
     MCU-->>Node: shot id, duration
     Node-->>Client: feedback RUNNING, shot id
     loop every 10 ms
@@ -783,7 +812,7 @@ ros2 action send_goal --feedback /freezer/shoot freezer_msgs/action/Shoot "{sequ
 
 ### Shots the Node Did Not Ask For
 
-The IN1 button fires the loaded table without the node. When the node polls the status while idle, as the watchdog heartbeat, a new shot id tells it that a shot happened. It could publish every shot, its own and the button's, on a `~/shots` topic, so that a node collecting pictures, e.g. StepIt Camera, knows a shot was fired whoever fired it.
+The IN1 button fires the loaded table without the node. When the node polls the status, a new shot id tells it that a shot happened. It could publish every shot, its own and the button's, on a `~/shots` topic, so that a node collecting pictures, e.g. StepIt Camera, knows a shot was fired whoever fired it.
 
 ### Packages
 
@@ -819,7 +848,7 @@ The node chooses the fake with a `use_fake` parameter, as StepIt chooses it with
 |---|---|
 | `test_fake_driver` | the fake runs a table, records the timeline, and fails when told to |
 | `test_default_driver` | the frames `DefaultDriver` sends and how it reads the answers, against a GMock of `FramedSerial`, as in StepIt |
-| `test_sequence` | the encoding of a table, its checksum and the rules of the controller |
+| `test_sequence` | the encoding of a table and the rules of the controller |
 | `test_recipes` | each recipe produces the expected table, and the jack to bit mapping |
 | `test_shot_runner` | a shot from load to end on `FakeDriver` and a clock the test moves: the callbacks, a sequence loaded once, a cancel, a refused table, a shot that never ends, a reset during and between shots |
 | `test_freezer_node` | the action against `FakeDriver`, for what only ROS2 does: the goals, named or raw, the rejections, and an aborted shot reaching the client |
@@ -835,11 +864,12 @@ The fake driver and the firmware sequencer must not drift apart. Sharing the val
 
 ## Safety
 
-- **A shot always runs to the end.** The watchdog must not cut it short: releasing the shutter mid-way leaves a camera in an unknown state. The watchdog only applies while idle.
-- **Idle means all outputs off.** At power on, at reset, and when the watchdog fires while idle, the controller writes `0x0000` and pulls `MR` low. A camera must never be left with its shutter held.
+- **A shot always runs to the end, unless the host stops it.** Nothing else cuts it short: releasing the shutter mid-way leaves a camera in an unknown state. `Stop` is the host's decision, and the one exception.
+- **Idle means the outputs of `SetOutputs`, or none.** At power on, at reset, after `Stop` and at the end of a shot, the controller writes `0x0000` and pulls `MR` low. A camera must never be left with its shutter held by a shot.
+- **No watchdog.** What `SetOutputs` set stays when the host goes silent, a light as well as a camera bit. A camera held by `SetOutputs` is the host's choice, released by the next `SetOutputs`, `Stop`, or a reset: opening the port resets the Nano, so a host that restarts and connects again finds every output off.
 - **Validate before touching anything.** As in StepIt, a malformed table, a step too long or a bit outside the 16 is rejected before the first output changes.
 - **The handshake.** An info query returns the name `FREEZER` and the protocol version, so the driver refuses to talk to a StepIt Teensy on the wrong port, or to a Freezer with firmware that speaks another protocol. See [The Handshake](#the-handshake).
-- **The remote trigger.** IN1 can keep working as today, or be disabled while the host is connected, so that a cable bumped during a session does not fire a shot. The controller should report a shot it started on its own.
+- **The remote trigger.** IN1 fires the loaded table, unless a shot runs or none is loaded, whether the host is connected or not. It is for testing: no arming, no report beyond the shot id that `Status` already returns.
 
 ## Open Questions
 
@@ -852,5 +882,4 @@ The fake driver and the firmware sequencer must not drift apart. Sharing the val
 - What is the shortest step we need, and the longest? This sets the Timer1 prescaler.
 - Should the controller time each camera separately, for cameras with different shutter lag?
 - Is OUT8 always the flash, or should any jack be a camera or a flash?
-- Do we want IN1 while ROS2 is in control?
 - Do we join Freezer and StepIt Camera into one node that knows when every picture has arrived?
