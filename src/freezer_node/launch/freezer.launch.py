@@ -26,19 +26,48 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Start the Freezer node with the parameters of config/freezer.yaml."""
+"""Start the Freezer node with the parameters of config/freezer.yaml, and the board page."""
+
+from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    LogInfo,
+    OpaqueFunction,
+)
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
+# The board page, built by bin/build.sh into web/dist of the repository. The
+# launch file is installed as a link to its source, so the repository is found
+# from where it really is.
+DEFAULT_WEB_DIR = Path(__file__).resolve().parents[3] / "web" / "dist"
+
+
+def serve_page(context):
+    """Serve the built page over HTTP, if it was built."""
+    web_dir = Path(LaunchConfiguration("web_dir").perform(context))
+    port = LaunchConfiguration("web_port").perform(context)
+    if not (web_dir / "index.html").is_file():
+        return [LogInfo(msg=f"No board page in {web_dir}: build it with bin/build.sh.")]
+    return [
+        LogInfo(msg=f"The board page is on http://localhost:{port}"),
+        ExecuteProcess(
+            cmd=["python3", "-m", "http.server", port, "--directory", str(web_dir)],
+            output="log",
+        ),
+    ]
+
 
 def generate_launch_description():
     use_fake = LaunchConfiguration("use_fake")
     usb_port = LaunchConfiguration("usb_port")
+    web = LaunchConfiguration("web")
     config = PathJoinSubstitution(
         [FindPackageShare("freezer_node"), "config", "freezer.yaml"]
     )
@@ -54,6 +83,26 @@ def generate_launch_description():
                 default_value="/dev/ttyUSB0",
                 description="Serial port of the Arduino Nano.",
             ),
+            DeclareLaunchArgument(
+                "web",
+                default_value="true",
+                description="Serve the board page, and rosbridge for it.",
+            ),
+            DeclareLaunchArgument(
+                "web_port",
+                default_value="8092",
+                description="HTTP port of the board page.",
+            ),
+            DeclareLaunchArgument(
+                "web_dir",
+                default_value=str(DEFAULT_WEB_DIR),
+                description="Folder of the built board page.",
+            ),
+            DeclareLaunchArgument(
+                "rosbridge_port",
+                default_value="9092",
+                description="Port of the rosbridge of the board page.",
+            ),
             Node(
                 package="freezer_node",
                 executable="freezer_node",
@@ -67,5 +116,22 @@ def generate_launch_description():
                     },
                 ],
             ),
+            # The page talks to the node through rosbridge, which needs
+            # freezer_msgs next to it.
+            Node(
+                package="rosbridge_server",
+                executable="rosbridge_websocket",
+                name="freezer_rosbridge",
+                output="log",
+                parameters=[
+                    {
+                        "port": ParameterValue(
+                            LaunchConfiguration("rosbridge_port"), value_type=int
+                        )
+                    }
+                ],
+                condition=IfCondition(web),
+            ),
+            OpaqueFunction(function=serve_page, condition=IfCondition(web)),
         ]
     )

@@ -18,3 +18,6 @@ fi
 
 rosdep update
 rosdep install --ignore-src --from-paths . -y -r
+
+# The packages of the board page, as web/pnpm-lock.yaml pins them.
+(cd web && pnpm install --frozen-lockfile --config.confirmModulesPurge=false)

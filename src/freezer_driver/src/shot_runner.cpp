@@ -52,6 +52,11 @@ void ShotRunner::load(const Sequence& sequence)
   loaded_ = sequence;
 }
 
+const std::optional<Sequence>& ShotRunner::loaded() const
+{
+  return loaded_;
+}
+
 ShotRunner::Result ShotRunner::run(const Sequence& sequence)
 {
   return run(sequence, Callbacks{});

@@ -109,7 +109,7 @@ TEST_F(TestDefaultDriver, connect_refuses_another_device)
 {
   EXPECT_CALL(*serial, open());
   EXPECT_CALL(*serial, write(_)).Times(1);
-  EXPECT_CALL(*serial, read()).WillOnce(Return(info_response("STEPIT")));
+  EXPECT_CALL(*serial, read()).WillOnce(Return(info_response("ANOTHER")));
   EXPECT_FALSE(driver->connect());
 }
 

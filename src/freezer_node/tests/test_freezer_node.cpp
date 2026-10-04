@@ -33,6 +33,7 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -48,6 +49,8 @@ using freezer_driver::FakeDriver;
 using Shoot = freezer_msgs::action::Shoot;
 using SetOutputs = freezer_msgs::srv::SetOutputs;
 using Trigger = std_srvs::srv::Trigger;
+using OutputsMsg = freezer_msgs::msg::Outputs;
+using ShotMsg = freezer_msgs::msg::Shot;
 using ResultCode = rclcpp_action::ResultCode;
 using namespace std::chrono_literals;
 
@@ -80,18 +83,32 @@ protected:
         { "sequences.flash_shot.cooldown_ms", 1.0 },
         { "poll_period", 0.001 },
         { "end_margin", 0.05 },
+        { "watch_period", 0.005 },
     });
     node = std::make_shared<FreezerNode>(options, std::move(driver));
     client_node = std::make_shared<rclcpp::Node>("client");
     client = rclcpp_action::create_client<Shoot>(client_node, "/freezer/shoot");
     set_outputs_client = client_node->create_client<SetOutputs>("/freezer/set_outputs");
     stop_client = client_node->create_client<Trigger>("/freezer/stop");
+    press_trigger_client = client_node->create_client<Trigger>("/freezer/fake/press_trigger");
+    const auto latched = rclcpp::QoS{ 10 }.reliable().transient_local();
+    outputs_subscription =
+        client_node->create_subscription<OutputsMsg>("/freezer/outputs", latched, [this](const OutputsMsg& message) {
+          std::lock_guard lock{ mutex };
+          received_outputs.push_back(message);
+        });
+    shots_subscription =
+        client_node->create_subscription<ShotMsg>("/freezer/shots", latched, [this](const ShotMsg& message) {
+          std::lock_guard lock{ mutex };
+          shots.push_back(message);
+        });
     executor.add_node(node);
     executor.add_node(client_node);
     spinner = std::thread{ [this] { executor.spin(); } };
     ASSERT_TRUE(client->wait_for_action_server(5s));
     ASSERT_TRUE(set_outputs_client->wait_for_service(5s));
     ASSERT_TRUE(stop_client->wait_for_service(5s));
+    ASSERT_TRUE(press_trigger_client->wait_for_service(5s));
   }
 
   void TearDown() override
@@ -160,6 +177,52 @@ protected:
     return *future.get();
   }
 
+  Trigger::Response press_trigger()
+  {
+    auto future = press_trigger_client->async_send_request(std::make_shared<Trigger::Request>());
+    EXPECT_EQ(future.wait_for(5s), std::future_status::ready);
+    return *future.get();
+  }
+
+  /** Wait until the shot events received satisfy the predicate. */
+  template <typename Predicate>
+  bool wait_shots(Predicate predicate)
+  {
+    for (int i = 0; i < 5'000; ++i)
+    {
+      {
+        std::lock_guard lock{ mutex };
+        if (predicate(shots))
+        {
+          return true;
+        }
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
+  /** The last outputs received, once some came. */
+  std::optional<uint16_t> last_outputs()
+  {
+    std::lock_guard lock{ mutex };
+    return received_outputs.empty() ? std::nullopt : std::optional<uint16_t>{ received_outputs.back().outputs };
+  }
+
+  /** Wait until the last outputs received are these. */
+  bool wait_outputs(uint16_t expected)
+  {
+    for (int i = 0; i < 5'000; ++i)
+    {
+      if (last_outputs() == expected)
+      {
+        return true;
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
   static Shoot::Goal raw_goal(std::vector<std::pair<uint16_t, uint32_t>> steps)
   {
     Shoot::Goal goal;
@@ -180,6 +243,11 @@ protected:
   rclcpp_action::Client<Shoot>::SharedPtr client;
   rclcpp::Client<SetOutputs>::SharedPtr set_outputs_client;
   rclcpp::Client<Trigger>::SharedPtr stop_client;
+  rclcpp::Client<Trigger>::SharedPtr press_trigger_client;
+  rclcpp::Subscription<OutputsMsg>::SharedPtr outputs_subscription;
+  rclcpp::Subscription<ShotMsg>::SharedPtr shots_subscription;
+  std::vector<OutputsMsg> received_outputs;
+  std::vector<ShotMsg> shots;
   rclcpp::executors::SingleThreadedExecutor executor;
   std::thread spinner;
   std::mutex mutex;
@@ -323,6 +391,76 @@ TEST_F(TestFreezerNode, abort_during_a_shot_of_the_trigger)
   const auto wrapped = result(second);
   EXPECT_EQ(wrapped.code, ResultCode::ABORTED);
   EXPECT_THAT(wrapped.result->message, ::testing::HasSubstr("a shot is running"));
+}
+
+/** outputs tells what set_outputs and stop did. */
+TEST_F(TestFreezerNode, outputs_topic)
+{
+  ASSERT_TRUE(wait_outputs(0x0000)) << "the node publishes the outputs, all off, when it starts";
+  set_outputs(0xC000);
+  EXPECT_TRUE(wait_outputs(0xC000));
+  stop();
+  EXPECT_TRUE(wait_outputs(0x0000));
+}
+
+/** shots tells when a shot starts and ends, with its steps. */
+TEST_F(TestFreezerNode, shots_topic)
+{
+  auto handle = send(raw_goal({ { 0x0003, 1'000 }, { 0x0000, 2'000 } }));
+  ASSERT_TRUE(handle);
+  const auto wrapped = result(handle);
+  ASSERT_EQ(wrapped.code, ResultCode::SUCCEEDED);
+
+  ASSERT_TRUE(wait_shots([](const auto& received) { return received.size() >= 2; }));
+  std::lock_guard lock{ mutex };
+  EXPECT_EQ(shots[0].event, ShotMsg::STARTED);
+  EXPECT_EQ(shots[0].source, ShotMsg::SOURCE_NODE);
+  EXPECT_EQ(shots[0].shot_id, wrapped.result->shot_id);
+  ASSERT_EQ(shots[0].steps.size(), 2u);
+  EXPECT_EQ(shots[0].steps[0].outputs, 0x0003);
+  EXPECT_EQ(shots[0].duration_us, 3'000u);
+  EXPECT_EQ(shots[1].event, ShotMsg::ENDED);
+  EXPECT_EQ(shots[1].elapsed_us, 3'000u);
+  EXPECT_EQ(rclcpp::Time{ shots[1].started }, rclcpp::Time{ wrapped.result->started });
+  EXPECT_EQ(received_outputs.back().outputs, 0x0000);
+}
+
+TEST_F(TestFreezerNode, shots_topic_tells_a_stop)
+{
+  auto handle = send(raw_goal({ { 0x0003, 2'000'000 }, { 0x0000, 1'000 } }));
+  ASSERT_TRUE(handle);
+  ASSERT_TRUE(wait_running());
+  stop();
+  ASSERT_EQ(result(handle).code, ResultCode::ABORTED);
+
+  ASSERT_TRUE(wait_shots([](const auto& received) { return received.size() >= 2; }));
+  std::lock_guard lock{ mutex };
+  EXPECT_EQ(shots[1].event, ShotMsg::STOPPED);
+  EXPECT_LT(shots[1].elapsed_us, 1'000'000u);
+}
+
+/**
+ * The node sees the shots of the trigger while idle, and tells them with the
+ * sequence it loaded last.
+ */
+TEST_F(TestFreezerNode, shots_of_the_trigger)
+{
+  EXPECT_FALSE(press_trigger().success) << "no sequence is loaded yet";
+
+  auto handle = send(raw_goal({ { 0x0003, 1'000 }, { 0x0000, 200'000 } }));
+  ASSERT_TRUE(handle);
+  const uint16_t node_shot = result(handle).result->shot_id;
+  EXPECT_TRUE(press_trigger().success);
+
+  ASSERT_TRUE(wait_shots([](const auto& received) { return received.size() >= 4; }));
+  std::lock_guard lock{ mutex };
+  EXPECT_EQ(shots[2].event, ShotMsg::STARTED);
+  EXPECT_EQ(shots[2].source, ShotMsg::SOURCE_TRIGGER);
+  EXPECT_EQ(shots[2].shot_id, node_shot + 1);
+  ASSERT_EQ(shots[2].steps.size(), 2u);
+  EXPECT_EQ(shots[2].steps[0].outputs, 0x0003);
+  EXPECT_EQ(shots[3].event, ShotMsg::ENDED);
+  EXPECT_EQ(shots[3].shot_id, node_shot + 1);
 }
 
 }  // namespace freezer_node::test

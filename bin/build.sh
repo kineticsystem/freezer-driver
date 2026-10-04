@@ -24,3 +24,6 @@ for directory in build install log; do
         touch "${directory}/CATKIN_IGNORE"
     fi
 done
+
+# The board page, into web/dist, which the launch file serves.
+(cd web && pnpm run build)

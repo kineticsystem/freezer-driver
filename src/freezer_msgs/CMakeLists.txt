@@ -6,6 +6,8 @@ find_package(builtin_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Outputs.msg"
+  "msg/Shot.msg"
   "msg/Step.msg"
   "action/Shoot.action"
   "srv/SetOutputs.srv"

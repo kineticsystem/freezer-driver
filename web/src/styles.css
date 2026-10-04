@@ -1,0 +1,349 @@
+:root {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --border: #dbe0e7;
+  --text: #1c2330;
+  --muted: #687284;
+  --accent: #3b6fb6;
+  --accent-soft: #e3ecf9;
+  --led-on: #f2b705;
+  --trace: #3b6fb6;
+  --trace-fill: rgba(59, 111, 182, 0.18);
+  --grid: #e6e9ee;
+  --danger: #c93a45;
+  --ok: #1d8a4f;
+  --warn: #b26b00;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b;
+    --panel: #1a1f27;
+    --border: #2c333e;
+    --text: #e3e7ee;
+    --muted: #8d96a6;
+    --accent: #6d9ce6;
+    --accent-soft: #223452;
+    --led-on: #ffcc33;
+    --trace: #6d9ce6;
+    --trace-fill: rgba(109, 156, 230, 0.22);
+    --grid: #262c35;
+    --danger: #ff6b74;
+    --ok: #4cc38a;
+    --warn: #f0a93b;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+h1 {
+  font-size: 18px;
+}
+
+h2 {
+  font-size: 15px;
+}
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+select {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+button.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+button.link {
+  border: none;
+  background: none;
+  color: var(--accent);
+  padding: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 16px 24px;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 14px 0;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-connected .dot {
+  background: var(--ok);
+}
+
+.status-connecting .dot {
+  background: var(--warn);
+}
+
+.status-disconnected .dot {
+  background: var(--danger);
+}
+
+.url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.url label {
+  color: var(--muted);
+}
+
+.url input {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 220px;
+  max-width: 50vw;
+}
+
+.layout {
+  display: grid;
+  gap: 16px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+/* The commands, as a toolbar. */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.controls .panel-header {
+  margin: 0;
+}
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.control-row select {
+  min-width: 160px;
+}
+
+.controls .message {
+  flex: 1;
+  min-width: 200px;
+}
+
+.message {
+  margin: 0;
+  min-height: 1.45em;
+  color: var(--muted);
+}
+
+.message.error {
+  color: var(--danger);
+}
+
+/* The shots. */
+.badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.state-stopped,
+.badge.state-failed {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.badge.state-ended {
+  color: var(--ok);
+  background: none;
+  border: 1px solid var(--ok);
+}
+
+.timing {
+  overflow: hidden;
+}
+
+.timing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.timing svg {
+  display: block;
+}
+
+.timing .grid {
+  stroke: var(--grid);
+}
+
+.timing .axis,
+.timing .label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.timing .label {
+  fill: var(--text);
+}
+
+.timing .unused .label {
+  fill: var(--muted);
+}
+
+.timing .trace {
+  fill: none;
+  stroke: var(--trace);
+  stroke-width: 1.5;
+}
+
+.timing .high {
+  fill: var(--trace-fill);
+}
+
+.timing .cursor {
+  stroke: var(--led-on);
+  stroke-width: 2;
+}
+
+.timing .stop {
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+
+.timing .hover {
+  stroke: var(--muted);
+  stroke-dasharray: 2 3;
+}
+
+.shot-list {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.shot-list th,
+.shot-list td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shot-list th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.shot-list tbody tr {
+  cursor: pointer;
+}
+
+.shot-list tbody tr:hover,
+.shot-list tr.selected {
+  background: var(--accent-soft);
+}

@@ -6,8 +6,8 @@
 - [Decisions](#decisions)
 - [What We Start From](#what-we-start-from)
   - [The Freezer Board](#the-freezer-board)
-  - [The StepIt Protocol](#the-stepit-protocol)
-  - [The StepIt Old Protocol](#the-stepit-old-protocol)
+  - [The Framed Protocol](#the-framed-protocol)
+  - [The Old Firmware](#the-old-firmware)
 - [The Shot](#the-shot)
   - [A Shot Is a Table of Steps](#a-shot-is-a-table-of-steps)
   - [Load, Then Trigger](#load-then-trigger)
@@ -40,12 +40,16 @@
   - [The Fake Driver](#the-fake-driver)
   - [The Tests](#the-tests)
   - [Testing the Firmware Logic](#testing-the-firmware-logic)
+- [Seeing the Board](#seeing-the-board)
+  - [What the Node Tells](#what-the-node-tells)
+  - [The Board Page](#the-board-page)
+  - [What It Cannot Show](#what-it-cannot-show)
 - [Safety](#safety)
 - [Open Questions](#open-questions)
 
 ## Introduction
 
-Freezer Driver lets ROS2 fire the Freezer board: up to 7 cameras and a flash, through the optocouplers driven by two 74HC595 shift registers on an Arduino Nano. It talks to the board the way [StepIt Driver](https://github.com/kineticsystem/stepit-driver) talks to its Teensy: framed, CRC-checked request and response messages over the USB serial port.
+Freezer Driver lets ROS2 fire the Freezer board: up to 7 cameras and a flash, through the optocouplers driven by two 74HC595 shift registers on an Arduino Nano. It talks to the board with framed, CRC-checked request and response messages over the USB serial port.
 
 This document collects ideas, and the decisions taken so far are listed in [Decisions](#decisions). The ROS2 packages and the firmware in `src` implement them, and fire shots on a Nano. See the [README](README.md) to build and run them. It follows one rule that everything else must respect: **once a shot starts, its timing belongs to the controller and nothing interrupts it**. The host asks for a shot and is told straight away that it has started, then polls until the controller says it has ended.
 
@@ -53,18 +57,18 @@ This document collects ideas, and the decisions taken so far are listed in [Deci
 
 - **Timer1 runs the shot.** The table is walked by the Timer1 compare-match interrupt, with the next pattern shifted in ahead of time and latched on the interrupt. `loop()` stays free to answer the serial port during the shot, see [Keeping the Critical Path Precise](#keeping-the-critical-path-precise).
 - **The host polls, Ideas 2 and 1.** `ShotResponse` returns at once with the shot id and the duration; the host waits that long and polls the status until the shot is done. The two-answer protocol of Idea 6 is not used.
-- **The StepIt protocol, unchanged.** One request, one response, the same framing and CRC-16, no sequence number, no link-layer acknowledgement. The code is reused: `framed_serial` on the host, `SerialPort`, `DataBuffer`, `CrcUtils` and `Guard` in the firmware.
+- **The framed protocol, unchanged.** One request, one response, the framing and CRC-16 of `framed_serial`, no sequence number, no link-layer acknowledgement. The code is reused: `framed_serial` on the host, `SerialPort`, `DataBuffer`, `CrcUtils` and `Guard` in the firmware.
 - **A table of steps, loaded, then fired.** `LoadSequence` sends the table, each step a 16-bit output bitmask and a hold time; `Shoot` fires the loaded table. See [A First Draft of the Protocol](#a-first-draft-of-the-protocol).
 - **The shot owns the outputs; lights and stop beside it.** `SetOutputs` switches outputs on or off, e.g. the lights, outside a shot; `Stop` ends a shot at once. During a shot, every command that would move an output is answered "busy", except `Stop`. IN1 fires the loaded table, unless a shot runs or no table is loaded. See [Lights, Stop and the Trigger](#lights-stop-and-the-trigger).
 - **No checksum of the table.** `Shoot` fires whatever table is loaded, and the host keeps track of what it loaded. One host owns the port, so the checksum only guarded against that host's own mistakes. Dropping it changes the wire, so it comes with version `2.0.0`, together with `SetOutputs` and `Stop`. See [A First Draft of the Protocol](#a-first-draft-of-the-protocol).
-- **No watchdog.** Unlike StepIt, which must stop its motors when the host goes silent, the controller keeps its outputs as they are: a shot runs to its end and switches everything off by itself, and what `SetOutputs` set stays until it is changed, `Stop`, or a reset. Opening the port resets the Nano, so a host that restarts finds every output off. See [Safety](#safety).
-- **A handshake and a version, as in StepIt.** `connect()` sends `Info`; the controller answers with its version, major, minor and patch, and the name `FREEZER`. The driver refuses another name or another major version. See [The Handshake](#the-handshake).
+- **No watchdog.** The controller does not act when the host goes silent; it keeps its outputs as they are: a shot runs to its end and switches everything off by itself, and what `SetOutputs` set stays until it is changed, `Stop`, or a reset. Opening the port resets the Nano, so a host that restarts finds every output off. See [Safety](#safety).
+- **A handshake and a version.** `connect()` sends `Info`; the controller answers with its version, major, minor and patch, and the name `FREEZER`. The driver refuses another name or another major version. See [The Handshake](#the-handshake).
 
 ## What We Start From
 
 ### The Freezer Board
 
-The current sketch in `sketch/sketch.ino` of the Freezer project fires a fixed sequence when input D7 goes high. The PCB maps the 16 shift register bits to the jacks as follows, bit 0 being the first one shifted out:
+The original sketch of the board fires a fixed sequence when input D7 goes high. The PCB maps the 16 shift register bits to the jacks as follows, bit 0 being the first one shifted out:
 
 | Bits | Jack | Use |
 |---|---|---|
@@ -76,21 +80,20 @@ The current sketch in `sketch/sketch.ino` of the Freezer project fires a fixed s
 The Arduino pins are D2 `MR`, D3 `SH_CP`, D4 `DS`, D5 `OE` and D6 `ST_CP`. The latch matters for timing: all 16 outputs change together on the rising edge of `ST_CP`, however long the 16 bits take to shift in. D8 and the J2 and J3 headers are free.
 
 > [!IMPORTANT]
-> The pin labels on `freezer/motherboard/CircuitSchema.png` do not match the PCB. The PCB and `Freezer.h` agree, and they are the truth.
+> The pin labels on [`docs/hardware/CircuitSchema.png`](docs/hardware/CircuitSchema.png) do not match the PCB. The PCB and `Freezer.h`, of the original sketch, agree, and they are the truth.
 
-### The StepIt Protocol
+### The Framed Protocol
 
-Three properties of StepIt shape the ideas below:
+Two properties of the protocol of `framed_serial` shape the ideas below:
 
 - **Strict request and response.** `DefaultDriver` writes a frame and blocks on `read()` for the answer. The firmware never speaks first. A frame the host did not ask for would be read as the answer to the next request.
 - **Framing.** Frames are delimited by `0x7E`, escaped with `0x7D`, and end with a CRC-16, as the `framed_serial` package implements it. The first byte of a request is the command id, the first byte of a response is `0x11` (success) or `0x12` (error).
-- **A watchdog.** The firmware stops the motors when no message arrives for 1 second, so the host keeps talking.
 
 The firmware side, `SerialPort` and `DataBuffer`, is plain Arduino code with buffers of 200 bytes. It should fit the 2 KB of RAM of the Nano, but we must check it.
 
-### The StepIt Old Protocol
+### The Old Firmware
 
-`~/repo/stepit-old` is the step between Freezer and StepIt Driver: one Nano drove two steppers and the Freezer board, and a Qt client drove the Nano. Its shot, `shootPicture()` in `arduino/StepIt/StepIt.ino`, runs this sequence on the same pins:
+An earlier firmware drove the Freezer board, together with two stepper motors, from one Nano, under a Qt client. Its shot runs this sequence on the same pins:
 
 | Step | Pattern | Jacks | Hold |
 |---|---|---|---|
@@ -126,7 +129,7 @@ The sketch hard-codes four steps of 100, 100, 100 and 200 ms. A `ShootCommand` c
 
 The host builds the table from parameters it understands, cameras and delays, and the controller only replays it. This keeps the firmware small and lets us change the sequence, e.g. a second flash or a camera fired later than the others, without flashing new firmware. At 7 bytes a step, 16 steps fit in one frame, see [A First Draft of the Protocol](#a-first-draft-of-the-protocol).
 
-Both sequences we already have are tables: the flash shot of the Freezer sketch and the timed light of StepIt Old differ only in their rows.
+Both sequences we already have are tables: the flash shot of the Freezer sketch and the timed light of the old firmware differ only in their rows.
 
 A simpler alternative is a fixed sequence with four durations and a camera mask. It is enough for today's use, and the protocol can grow into the table later.
 
@@ -159,7 +162,7 @@ What changes nothing in the loaded table gets a command of its own:
 The rules:
 
 - **The shot owns all 16 outputs.** It is the priority: while it runs, `SetOutputs`, `LoadSequence` and `Shoot` are answered "busy", and only `Stop` can end it. The protocol is strict request and response, so the controller must answer something, and "busy" tells the host that its outputs did not change.
-- **A shot ends with every output off,** lights included: a light set by `SetOutputs` before the shot is off after it. A shot that needs light has the light's bits in its steps, timed by Timer1 like the rest, as the timed light of StepIt Old does. The host sends `SetOutputs` again after the shot to have the lights back.
+- **A shot ends with every output off,** lights included: a light set by `SetOutputs` before the shot is off after it. A shot that needs light has the light's bits in its steps, timed by Timer1 like the rest, as the timed light of the old firmware does. The host sends `SetOutputs` again after the shot to have the lights back.
 - **IN1 is for testing,** and stays simple: no arming, no setting to disable it, nothing sent to the host. It fires the loaded table unless a shot is running or no table is loaded, which is the case after every connection, since the Nano resets when the port opens. A button bounces when pressed and when released, after a short shot too, so the firmware counts a level of IN1 only once it has held for 20 ms, and only a press fires. A shot fired by IN1 still takes a shot id, which the host reads with `Status` if it cares, see [Shots the Node Did Not Ask For](#shots-the-node-did-not-ask-for). A `Shoot` from the host during it is answered "busy".
 - **On the ROS2 side,** the node offers `set_outputs`, a `freezer_msgs/SetOutputs` service, and `stop`, a `std_srvs/Trigger`. A stop aborts the goal of the running shot with `Stopped.`: the controller reads idle with the shot id, as after a shot that ran to its end, so the node alone knows. The services call the controller while the shot's thread polls it: `SynchronizedDriver` lets one call through at a time.
 - **A strobe is dropped.** It needs a repeat step, or more than the 16 steps that fit, and a strobe that runs until stopped breaks the limit on the duration. It was only an example.
@@ -197,7 +200,7 @@ The ROS2 interface should not speak in bit patterns. A small builder in `freezer
 | Recipe | Parameters | Table |
 |---|---|---|
 | Flash shot | cameras, focus, shutter-to-flash, flash, cooldown | the Freezer sketch sequence |
-| Timed light | cameras, focus, shutter-to-light, light time, light-to-close, cooldown | the StepIt Old sequence |
+| Timed light | cameras, focus, shutter-to-light, light time, light-to-close, cooldown | the sequence of the old firmware |
 | Strobe | cameras, flash count, flash interval | a repeat around the flash step |
 
 The recipes and their parameters live in the parameters of the node, and the action goal names one, see [The Shoot Action](#the-shoot-action). The builder knows the jack to bit mapping of the board. A raw table can still be sent for experiments.
@@ -368,7 +371,7 @@ sequenceDiagram
     MCU-->>Driver: done, shot id 7, timings
 ```
 
-It keeps the protocol exactly as StepIt has it, and the polling doubles as the watchdog heartbeat. The price is latency, up to one polling period, and a few small frames during the shot, which the ISR barely notices.
+It keeps the protocol exactly as it is, and the polling doubles as the watchdog heartbeat. The price is latency, up to one polling period, and a few small frames during the shot, which the ISR barely notices.
 
 ### Idea 2: The Acknowledgement Carries the Duration
 
@@ -388,7 +391,7 @@ So the predicted end is a deadline: the host waits until then, plus a margin, an
 
 When the shot ends, the controller sends a `ShotFinished` frame on its own. The host learns the end within about a millisecond.
 
-The price is in the host: the request and response pairing of `DefaultDriver` no longer holds. A reader thread must own the serial port, tell responses from events by a message type byte, deliver responses to whoever is waiting and events to a callback. The two can cross on the wire: the event can arrive while the host waits for the answer to a status query. This is the biggest change to the StepIt design, and it is only worth it if we need the end of a shot within a millisecond.
+The price is in the host: the request and response pairing of `DefaultDriver` no longer holds. A reader thread must own the serial port, tell responses from events by a message type byte, deliver responses to whoever is waiting and events to a callback. The two can cross on the wire: the event can arrive while the host waits for the answer to a status query. This is the biggest change to the design, and it is only worth it if we need the end of a shot within a millisecond.
 
 ### Idea 4: The Next Response Carries the News
 
@@ -396,13 +399,13 @@ Every response gets a small header with the state of the last shot. The host lea
 
 ### Idea 5: The Camera Tells Us
 
-The real end of a shot is not the end of the table but the camera writing a picture. StepIt Camera already downloads every picture the camera takes. A node that combines the two could wait for the `ShotFinished` of Freezer and for the picture of each camera. This does not replace the other ideas, it adds a second check: a camera that did not fire shows up as a missing picture.
+The real end of a shot is not the end of the table but the camera writing a picture. A camera driver that downloads every picture the camera takes, combined with this one in a node, could wait for the `ShotFinished` of Freezer and for the picture of each camera. This does not replace the other ideas, it adds a second check: a camera that did not fire shows up as a missing picture.
 
 A hardware version of the same idea uses the free D8: the X-sync of one camera, from its hot shoe or PC socket, tells the controller when the shutter is fully open. The flash could even be fired by it instead of by a fixed delay.
 
 ### Idea 6: Two Answers to One Request
 
-This is the StepIt Old protocol, with its faults fixed. A `ShootCommand` gets two answers carrying the same sequence number: a `ShotResponse` when the shot starts and a `ShotFinished` when it ends. Every other command keeps its single answer.
+This is the protocol of the old firmware, with its faults fixed. A `ShootCommand` gets two answers carrying the same sequence number: a `ShotResponse` when the shot starts and a `ShotFinished` when it ends. Every other command keeps its single answer.
 
 ```mermaid
 ---
@@ -486,16 +489,16 @@ The rules that make it safe:
 
 ### Is the Acknowledgement the Right Way?
 
-StepIt Old acknowledged every frame in the link layer and answered in the command layer. That is two separate ideas, and only the second one is worth keeping.
+The old firmware acknowledged every frame in the link layer and answered in the command layer. That is two separate ideas, and only the second one is worth keeping.
 
-**A link-layer acknowledgement for every frame is not worth it.** It protects against a frame lost on a USB serial link, which almost never happens, and the link is already checked by the CRC. It doubles the frames, and it brings retransmission, which is exactly what fired the second shot. StepIt Driver works without it: one request, one response, and a timeout. If a frame is lost, the timeout catches it, and the host can always ask the state.
+**A link-layer acknowledgement for every frame is not worth it.** It protects against a frame lost on a USB serial link, which almost never happens, and the link is already checked by the CRC. It doubles the frames, and it brings retransmission, which is exactly what fired the second shot. `framed_serial` works without it: one request, one response, and a timeout. If a frame is lost, the timeout catches it, and the host can always ask the state.
 
 **Two answers for the one command that takes time are worth it.** The second answer is what tells the host "finished" within a millisecond and with no traffic during the shot. It is not an unsolicited event: it answers a request the host made, carries its sequence number, and arrives when the host expects it.
 
 What it costs, compared with polling:
 
 - **The host read path changes for one command.** `DefaultDriver` today reads one frame per request. `shoot()` reads the first answer and returns; a second call, e.g. `wait_shot_finished(timeout)`, reads the second. Any other call between the two is an error.
-- **The link is busy during the shot.** That cost StepIt Old its motors, which lived on the same Nano and stopped for every shot. Freezer has its own controller now and nothing else to do, so it costs nothing here.
+- **The link is busy during the shot.** That cost the old firmware its motors, which lived on the same Nano and stopped for every shot. Freezer has its own controller now and nothing else to do, so it costs nothing here.
 - **The watchdog is silent during the shot.** No heartbeat can be sent while waiting. That matches the rule that a shot always runs to the end; the watchdog applies again once `ShotFinished` is sent.
 - **A lost `ShotFinished` needs a way back.** The status query of Idea 1 is that way back, so we build both.
 
@@ -514,11 +517,11 @@ Polling, Idea 1 and 2, avoids all of this at the price of traffic during the sho
 
 ### Decision
 
-**Ideas 2 and 1.** The `ShotResponse` carries the shot id and the duration; the host waits that long, then polls the status every 10 ms until it reads "done". It keeps the StepIt protocol, its code and its tests as they are, the controller is the authority on whether the shot has ended, and the measured timings come back with the status.
+**Ideas 2 and 1.** The `ShotResponse` carries the shot id and the duration; the host waits that long, then polls the status every 10 ms until it reads "done". It keeps the framed protocol, its code and its tests as they are, the controller is the authority on whether the shot has ended, and the measured timings come back with the status.
 
 The timer makes this possible: polling is served by `loop()`, and the Timer1 interrupt latches each pattern at its count whatever `loop()` is doing. A poll can delay a step only by the length of another interrupt, a few microseconds, and that delay does not add up from step to step. The rules that keep it so:
 
-- **No long critical section in `loop()`.** Copying the shot state for a status answer uses the `Guard` flags of StepIt or an atomic block of a few microseconds. No library that disables interrupts for long, e.g. `SoftwareSerial`.
+- **No long critical section in `loop()`.** Copying the shot state for a status answer uses the `Guard` flags of the firmware or an atomic block of a few microseconds. No library that disables interrupts for long, e.g. `SoftwareSerial`.
 - **A short interrupt.** Latch, shift the next pattern with direct port writes, set the next compare value: about 27.5 µs in all, measured on the Nano. No serial, no `digitalWrite`, no floating point.
 - **Safe reads of shared state.** A 16-bit or 32-bit value read by `loop()` can be torn by the interrupt on an 8-bit microcontroller, so it is read under a guard.
 
@@ -526,7 +529,7 @@ Learning the end of the shot late, by up to one polling period plus the USB late
 
 ## A First Draft of the Protocol
 
-The framing, the CRC-16 and the byte order, most significant byte first, are those of StepIt. A response starts with `0x11` for success or `0x12` for an error. An error carries a reason byte after it: `DefaultDriver` of StepIt reads only the first byte, so the reason costs nothing to a reader that ignores it.
+The framing, the CRC-16 and the byte order, most significant byte first, are those of `framed_serial`. A response starts with `0x11` for success or `0x12` for an error. An error carries a reason byte after it, which a reader that only checks the first byte can ignore.
 
 | Id | Command | Request payload | Success payload |
 |---|---|---|---|
@@ -538,8 +541,8 @@ The framing, the CRC-16 and the byte order, most significant byte first, are tho
 | `0x77` | `SetOutputs` | bitmask, 2 bytes | none |
 | `0x78` | `Stop` | none | none |
 
-- **Ids.** `Info`, `Status` and `Echo` keep their StepIt ids, and `Shoot` keeps the id it had in StepIt Old. A StepIt controller on the wrong port answers `Info` with the name `STEPIT` and is refused.
-- **The step.** Type `0x00` is "set and hold"; the other values are reserved for [Richer Steps](#richer-steps). The bitmask is the 16 outputs, bit 0 being OUT1 shutter, see [The Freezer Board](#the-freezer-board). A step is 7 bytes, and 16 steps make a payload of 114 bytes, 116 with the CRC, under the 200 bytes of the StepIt receive buffer, which keeps the bytes unescaped.
+- **Ids.** `Shoot` keeps the id it had in the old firmware. Another device on the wrong port that answers `Info` gives another name, and is refused.
+- **The step.** Type `0x00` is "set and hold"; the other values are reserved for [Richer Steps](#richer-steps). The bitmask is the 16 outputs, bit 0 being OUT1 shutter, see [The Freezer Board](#the-freezer-board). A step is 7 bytes, and 16 steps make a payload of 114 bytes, 116 with the CRC, under the 200 bytes of the receive buffer, which keeps the bytes unescaped.
 - **No checksum.** Version `1.1.0` had `LoadSequence` return the CRC-16 of the table, and `Shoot` send it back, so that the controller refused to fire a table other than the one the host meant: a test table the shot was not loaded again after, or a table whose `LoadSequence` answer was lost. `Status` returned it too. With one host on the port, these are mistakes of that host, which it avoids by remembering what it loaded, so version `2.0.0` drops the checksum from the three commands, and the error "wrong table" with it. The CRC-16 of every frame, which checks the link, stays.
 - **`SetOutputs` and `Stop`.** `SetOutputs` writes its mask at once and keeps it until the next one, a shot, or `Stop`. `Stop` writes `0x0000` and, during a shot, stops Timer1: the shot ends where it was, and `Status` reads idle with its shot id. Added in `2.0.0`, with the removal of the checksum, which changes the wire.
 - **The state.** `0x00` idle, `0x01` running. A shot is over for the host when the state is idle and the last shot id is the one `Shoot` returned.
@@ -553,7 +556,7 @@ The framing, the CRC-16 and the byte order, most significant byte first, are tho
 
 ### The Handshake
 
-The serial port path alone does not tell the driver what is attached, so `connect()` checks it, as StepIt Driver does. It sends `Info` and reads the answer, laid out as in StepIt, the limits before the name so that the name stays "the remaining bytes":
+The serial port path alone does not tell the driver what is attached, so `connect()` checks it. It sends `Info` and reads the answer, the limits before the name so that the name stays "the remaining bytes":
 
 | Field | Size |
 |---|---|
@@ -566,12 +569,12 @@ The serial port path alone does not tell the driver what is attached, so `connec
 
 The driver accepts the controller only when:
 
-1. **The name is `FREEZER`.** Any other name, e.g. `STEPIT` from a StepIt Teensy on the wrong port, is refused at once, without more attempts: the device answered, it is the wrong one.
+1. **The name is `FREEZER`.** Any other name, from another device on the wrong port, is refused at once, without more attempts: the device answered, it is the wrong one.
 2. **The major version is the one the driver speaks.** Otherwise the driver refuses, logs both versions and says to flash the firmware that matches the workspace.
 
 Then it logs the firmware version and keeps the limits, which the recipe builder and the `FakeDriver` use to reject a table before sending it.
 
-**The version.** The firmware defines `VERSION_MAJOR`, `VERSION_MINOR` and `VERSION_PATCH`, the driver `kExpectedProtocolVersion`, as in StepIt. The first version is `1.0.0`, which answers `Info` and `Echo`; `1.1.0` adds `LoadSequence`, `Shoot` and `Status`, a minor version since a driver of 1.0.0 knows nothing of them.
+**The version.** The firmware defines `VERSION_MAJOR`, `VERSION_MINOR` and `VERSION_PATCH`, the driver `kExpectedProtocolVersion`. The first version is `1.0.0`, which answers `Info` and `Echo`; `1.1.0` adds `LoadSequence`, `Shoot` and `Status`, a minor version since a driver of 1.0.0 knows nothing of them.
 
 | Part | Changes when | Driver |
 |---|---|---|
@@ -581,10 +584,7 @@ Then it logs the firmware version and keeps the limits, which the recipe builder
 
 The firmware and the driver live in the same repository, so a change of the wire changes both, and the major version, in the same commit.
 
-**The Nano resets when the port opens.** Unlike the Teensy of StepIt, which has native USB, the Nano 3.0 is reset by the DTR line of the FT232 every time the host opens the port. The bootloader then listens for an upload before the firmware starts, and a frame sent in that time is lost. On our Nano, with the old bootloader, the first `Info` was answered 0.65 s after opening the port, at the 4th attempt. StepIt's 5 attempts, 0.2 s of timeout and 100 ms apart, last about 1.5 s: enough for this Nano, with little margin, and not for a bootloader that waits longer. The driver waits after opening the port, a `connect_delay` parameter of 1 s by default, before its first `Info`. Keeping the port open for the whole session matters for the same reason: every reopen restarts the controller and clears the loaded table.
-
-> [!NOTE]
-> In StepIt Driver, `stepit.ros2_control.xacro` sets `baud_rate` while `DefaultSerialFactory` reads `baudrate`, so the xacro value is ignored and the default of 9600 is used. Both happen to be 9600 today. When we reuse the factory we should fix the name in one of the two.
+**The Nano resets when the port opens.** Unlike a microcontroller with native USB, the Nano 3.0 is reset by the DTR line of the FT232 every time the host opens the port. The bootloader then listens for an upload before the firmware starts, and a frame sent in that time is lost. On our Nano, with the old bootloader, the first `Info` was answered 0.65 s after opening the port, at the 4th attempt. The driver's 5 attempts, 0.2 s of timeout and 100 ms apart, last about 1.5 s: enough for this Nano, with little margin, and not for a bootloader that waits longer. The driver waits after opening the port, a `connect_delay` parameter of 1 s by default, before its first `Info`. Keeping the port open for the whole session matters for the same reason: every reopen restarts the controller and clears the loaded table.
 
 ### A Shot from the Host
 
@@ -597,9 +597,9 @@ The firmware and the driver live in the same repository, so a change of the wire
 
 ### An Action, Not a Service
 
-A shot has a start, a duration and an end, which is what a ROS2 action is for. A client such as a focus stacking sequence can move the StepIt rail, wait for it to settle, send a goal, wait for the result, and move on.
+A shot has a start, a duration and an end, which is what a ROS2 action is for. A client such as a focus stacking sequence can move a rail, wait for it to settle, send a goal, wait for the result, and move on.
 
-`ros2_control` does not fit here: there is no joint and no control loop, only a command and its result. A plain node with an action server, as in StepIt Camera, is simpler.
+`ros2_control` does not fit here: there is no joint and no control loop, only a command and its result. A plain node with an action server is simpler.
 
 ### The Shoot Action
 
@@ -688,7 +688,7 @@ The hold is a `uint32` in microseconds, not a `builtin_interfaces/Duration`: it 
 
 A rejection carries no reason in ROS2, so the node logs it, and the rules are the ones `Info` reported, which a client can read too. Validating in `handle_goal` costs no serial traffic: the limits are known since the handshake.
 
-One goal at a time keeps the controller simple, and the polling, the loading and the shot run on one thread that owns the driver, as StepIt Camera owns its camera.
+One goal at a time keeps the controller simple, and the polling, the loading and the shot run on one thread that owns the driver.
 
 ```mermaid
 ---
@@ -813,11 +813,11 @@ ros2 action send_goal --feedback /freezer/shoot freezer_msgs/action/Shoot "{sequ
 
 ### Shots the Node Did Not Ask For
 
-The IN1 button fires the loaded table without the node. When the node polls the status, a new shot id tells it that a shot happened. It could publish every shot, its own and the button's, on a `~/shots` topic, so that a node collecting pictures, e.g. StepIt Camera, knows a shot was fired whoever fired it.
+The IN1 button fires the loaded table without the node. When the node polls the status, a new shot id tells it that a shot happened. It could publish every shot, its own and the button's, on a `~/shots` topic, so that a node collecting pictures knows a shot was fired whoever fired it.
 
 ### Packages
 
-Following the layout of StepIt Driver:
+The packages:
 
 | Package | Role |
 |---|---|
@@ -825,11 +825,11 @@ Following the layout of StepIt Driver:
 | `freezer_msgs` | the `Shoot` action |
 | `freezer_node` | the action server, parameters for the serial port, `use_fake` and the default durations |
 | `freezer_mcu` | PlatformIO project for the Nano, not built by colcon |
-| `framed_serial` | shared with StepIt Driver, as the submodule `modules/framed-serial` |
+| `framed_serial` | the framed protocol, as the submodule `modules/framed-serial` |
 
 ## Testing Without the Board
 
-StepIt Driver runs without motors: `FakeDriver` implements the same `Driver` interface as `DefaultDriver`, with `FakeMotor` computing where a motor would be from the time it is given. Freezer Driver needs the same, so that the node, the action and the recipes can be developed and tested on any computer.
+Freezer Driver must run without the board, so that the node, the action and the recipes can be developed and tested on any computer.
 
 ### The Fake Driver
 
@@ -841,14 +841,14 @@ StepIt Driver runs without motors: `FakeDriver` implements the same `Driver` int
 - **It answers as the controller would**, the `ShotResponse` at the start and, for Idea 6, `ShotFinished` at the end, or "running" and "done" to a status query.
 - **It can be told to fail**: never send `ShotFinished`, reset in the middle of a shot, refuse a table, or report a step that ran late. These are the paths that are hard to provoke with the real board, and the ones the host code must get right.
 
-The node chooses the fake with a `use_fake` parameter, as StepIt chooses it with `use_dummy` in its `ros2_control` xacro. It is `true` by default, so the project runs without hardware.
+The node chooses the fake with a `use_fake` parameter. It is `true` by default, so the project runs without hardware.
 
 ### The Tests
 
 | Test | What it covers |
 |---|---|
 | `test_fake_driver` | the fake runs a table, records the timeline, and fails when told to |
-| `test_default_driver` | the frames `DefaultDriver` sends and how it reads the answers, against a GMock of `FramedSerial`, as in StepIt |
+| `test_default_driver` | the frames `DefaultDriver` sends and how it reads the answers, against a GMock of `FramedSerial` |
 | `test_sequence` | the encoding of a table and the rules of the controller |
 | `test_recipes` | each recipe produces the expected table, and the jack to bit mapping |
 | `test_shot_runner` | a shot from load to end on `FakeDriver` and a clock the test moves: the callbacks, a sequence loaded once, a cancel, a refused table, a shot that never ends, a reset during and between shots |
@@ -863,24 +863,58 @@ PlatformIO can then build the same class for the host, with a `native` environme
 
 The fake driver and the firmware sequencer must not drift apart. Sharing the validation code between them, a header compiled into both, keeps the rules in one place.
 
+## Seeing the Board
+
+We want to run the driver against the fake controller and watch what happens: which outputs close, in which order, for how long. A URDF in RViz does not fit: it moves links from joint states, but their colours are fixed, so it cannot light a switch. PlotJuggler draws a timing diagram well, but only shows data: the shots would still be fired from a terminal. So the board gets a page of its own, which fires the commands and draws the timing of each shot, against the fake controller and against the real board alike. A drawing of the board, its jacks lit live, was tried and dropped: the timing of the shots already shows what the outputs did.
+
+### What the Node Tells
+
+Nothing published what the outputs were, so the node gets two topics, each keeping its last message for a client that subscribes late (transient local). Its last only: rosbridge passes a new client the first message a topic kept, so with more, a page would open on the oldest.
+
+| Topic | Type | When |
+|---|---|---|
+| `~/outputs` | `freezer_msgs/Outputs` | at every change the node knows of: what `set_outputs` latched, all off after a stop and at the end of a shot, and each step of a shot as the controller reports it |
+| `~/shots` | `freezer_msgs/Shot` | when a shot starts, with its table and the time the controller confirmed its start, and when it ends, stops or fails |
+
+**The timing comes from the table, not from the messages.** A page that stamped each change when its message arrives would inherit every delay on the way, the node's polling, DDS, rosbridge and the browser: several milliseconds, enough to draw a 100 ms step as 97 or 104. The controller runs the table exactly, so the start of the shot and its table give every boundary to the microsecond. `~/outputs` is for showing the board live, where a few milliseconds do not matter; during a shot it follows the steps the polling sees, so a step shorter than the polling period may never appear on it.
+
+**The node watches for the trigger.** The node only talked to the controller during its own shots, so it never saw a shot fired by IN1. While no goal runs, it now queries the status every `watch_period`, 200 ms by default, and a new shot id tells it the trigger fired: the shot runs the table the node loaded last, and the time it has run, from the status, gives its start. A shot shorter than the period is seen only once it ended, and its start is estimated from its duration. The cost is a status query every 200 ms when idle, which the serial port has room for.
+
+**The fake controller has a trigger.** With `use_fake`, the service `~/fake/press_trigger` presses IN1 of the `FakeDriver`, so that the trigger can be tried without the board.
+
+### The Board Page
+
+The page lives in `web`, in React and TypeScript, built with Vite and pnpm. It is not a ROS package: a `COLCON_IGNORE` keeps colcon out of it, and the scripts in `bin` install, build and test it.
+
+- **It reaches the node through rosbridge,** a WebSocket that speaks JSON, so that the browser needs no ROS. The launch file starts a rosbridge of its own, on port 9092, because a rosbridge only knows the messages installed next to it, `freezer_msgs` here.
+- **The launch file serves it,** built, with Python's HTTP server, on port 8092, so that running it needs neither Node.js nor a server of our own. `web=false` leaves both out.
+- **The commands:** a sequence of the parameters to shoot, stop, all off, and press IN1 of the fake controller.
+- **The timing of a shot:** a row per line, high while it is closed, as a logic analyser draws it, drawn from the table; a cursor follows a running shot, and a stopped one is cut where it stopped. The page keeps the last 50 shots, the node's and the trigger's, and draws the one picked.
+
+The diagram is plain SVG, drawn by the page: 16 lines and a few dozen changes need no chart library.
+
+### What It Cannot Show
+
+The page shows the logic of a shot: which outputs, in which order, for how long, at the scale of milliseconds. It cannot show how precisely the controller ran it: the timing it draws is the table's, what the controller was told, not a measurement. The controller measures itself only as the worst lateness of a shot, which the page shows next to it, and only a logic analyser on `ST_CP` shows the real latches.
+
 ## Safety
 
 - **A shot always runs to the end, unless the host stops it.** Nothing else cuts it short: releasing the shutter mid-way leaves a camera in an unknown state. `Stop` is the host's decision, and the one exception.
 - **Idle means the outputs of `SetOutputs`, or none.** At power on, at reset, after `Stop` and at the end of a shot, the controller writes `0x0000` and pulls `MR` low. A camera must never be left with its shutter held by a shot.
 - **No watchdog.** What `SetOutputs` set stays when the host goes silent, a light as well as a camera bit. A camera held by `SetOutputs` is the host's choice, released by the next `SetOutputs`, `Stop`, or a reset: opening the port resets the Nano, so a host that restarts and connects again finds every output off.
-- **Validate before touching anything.** As in StepIt, a malformed table, a step too long or a bit outside the 16 is rejected before the first output changes.
-- **The handshake.** An info query returns the name `FREEZER` and the protocol version, so the driver refuses to talk to a StepIt Teensy on the wrong port, or to a Freezer with firmware that speaks another protocol. See [The Handshake](#the-handshake).
+- **Validate before touching anything.** A malformed table, a step too long or a bit outside the 16 is rejected before the first output changes.
+- **The handshake.** An info query returns the name `FREEZER` and the protocol version, so the driver refuses to talk to another device on the wrong port, or to a Freezer with firmware that speaks another protocol. See [The Handshake](#the-handshake).
 - **The remote trigger.** IN1 fires the loaded table, unless a shot runs or none is loaded, whether the host is connected or not. It is for testing: no arming, no report beyond the shot id that `Status` already returns.
 
 ## Open Questions
 
-- What was plugged into OUT5 to OUT8 in StepIt Old: flash units, or continuous lights pulsed for `flashTime`?
+- What was plugged into OUT5 to OUT8 under the old firmware: flash units, or continuous lights pulsed for `flashTime`?
 - Does the table survive a power cycle, stored in the EEPROM, or must the host load it after every connection?
 - Does the shot id count from 0 at every reset, or does `Info` also return a boot counter so the host can tell a reset?
 - Do we want repeat and wait steps in the first version, or only reserve the step type byte for them?
 - Does our Nano run from a crystal or a resonator? Our Nano has a genuine FT232R, with its latency timer at 16 ms: do we lower it to 1 ms? An `Info` round trip takes 48 ms at 9600 baud today.
-- Do we keep the Nano and the current board, or move to a Teensy like StepIt? The Teensy has more RAM and native USB, but the board is designed for the Nano footprint.
+- Do we keep the Nano and the current board, or move to a Teensy? The Teensy has more RAM and native USB, but the board is designed for the Nano footprint.
 - What is the shortest step we need, and the longest? This sets the Timer1 prescaler.
 - Should the controller time each camera separately, for cameras with different shutter lag?
 - Is OUT8 always the flash, or should any jack be a camera or a flash?
-- Do we join Freezer and StepIt Camera into one node that knows when every picture has arrived?
+- Do we join Freezer and a camera driver into one node that knows when every picture has arrived?

@@ -17,3 +17,10 @@ __pycache__
 
 # The firmware read from the Nano before the first upload: see README.md.
 backup/
+
+# The board page: its packages, its build, and the pnpm store, which pnpm puts
+# at the root of the repository when it is mounted from another file system
+# than the home folder, as in the container.
+node_modules
+web/dist
+.pnpm-store/

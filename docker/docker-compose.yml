@@ -2,9 +2,8 @@
 # CONTAINER_NAME and USER_UID/USER_GID.
 #
 # The container runs the driver, so it needs the host's devices: the serial port
-# to the Arduino Nano. It shares the host network, as the StepIt containers do,
-# so that they can discover each other's ROS2 graph over DDS (see
-# cyclonedds.xml).
+# to the Arduino Nano. It shares the host network, so that it can discover the
+# ROS2 graph of other containers over DDS (see cyclonedds.xml).
 
 services:
   dev:

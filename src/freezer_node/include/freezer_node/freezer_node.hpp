@@ -38,7 +38,10 @@
 #include <freezer_driver/driver.hpp>
 #include <freezer_driver/sequence.hpp>
 #include <freezer_driver/shot_runner.hpp>
+#include <freezer_driver/synchronized_driver.hpp>
 #include <freezer_msgs/action/shoot.hpp>
+#include <freezer_msgs/msg/outputs.hpp>
+#include <freezer_msgs/msg/shot.hpp>
 #include <freezer_msgs/srv/set_outputs.hpp>
 
 #include <rclcpp/rclcpp.hpp>
@@ -48,8 +51,8 @@
 namespace freezer_node
 {
 /**
- * @brief The ROS2 node of the Freezer board: a Shoot action server, and the
- * services set_outputs and stop.
+ * @brief The ROS2 node of the Freezer board: a Shoot action server, the
+ * services set_outputs and stop, and the topics outputs and shots.
  *
  * A goal names a sequence of the node parameters, or carries a raw table. The
  * node checks it, then hands it to a ShotRunner, which loads it into the
@@ -61,6 +64,11 @@ namespace freezer_node
  * the running shot, whose goal then aborts, and switches every output off.
  * They call the controller from the executor's thread, between two queries of
  * the shot's thread: the driver is shared, one call at a time.
+ *
+ * outputs and shots tell what the board does, for a client that shows it.
+ * While no goal runs, the node polls the controller every watch_period, to see
+ * the shots of the remote trigger, IN1. With a fake controller, the service
+ * fake/press_trigger presses IN1.
  */
 class FreezerNode : public rclcpp::Node
 {
@@ -69,6 +77,8 @@ public:
   using GoalHandle = rclcpp_action::ServerGoalHandle<Shoot>;
   using SetOutputs = freezer_msgs::srv::SetOutputs;
   using Trigger = std_srvs::srv::Trigger;
+  using OutputsMsg = freezer_msgs::msg::Outputs;
+  using ShotMsg = freezer_msgs::msg::Shot;
 
   /**
    * @brief Create the node with the driver chosen by the parameter use_fake.
@@ -107,8 +117,20 @@ private:
   void handle_set_outputs(const std::shared_ptr<SetOutputs::Request>& request,
                           const std::shared_ptr<SetOutputs::Response>& response);
   void handle_stop(const std::shared_ptr<Trigger::Response>& response);
+  void handle_press_trigger(const std::shared_ptr<Trigger::Response>& response);
+
+  /** Poll the controller while no goal runs, for the shots of the trigger. */
+  void watch();
+
+  void publish_outputs(uint16_t outputs, uint16_t shot_id = 0, uint8_t step = 0);
+
+  /** A shot event, with the steps of the sequence when known. */
+  ShotMsg shot_message(uint8_t event, uint8_t source, uint16_t shot_id, const rclcpp::Time& started,
+                       const std::optional<freezer_driver::Sequence>& sequence);
 
   std::unique_ptr<freezer_driver::Driver> driver_;
+  // The same driver as driver_, as the SynchronizedDriver it is.
+  freezer_driver::SynchronizedDriver* synchronized_ = nullptr;
   std::unique_ptr<freezer_driver::ShotRunner> runner_;
   freezer_driver::SequenceLimits limits_;
   bool connected_ = false;
@@ -121,10 +143,29 @@ private:
   bool started_ = false;
   bool cancel_requested_ = false;
   bool stop_requested_ = false;
+  // When the last stop was sent, to tell how long a stopped shot ran.
+  std::optional<rclcpp::Time> stop_time_;
+  // The id of the last shot the node knows of, its own or the trigger's.
+  uint16_t known_shot_id_ = 0;
+
+  /** A shot of the trigger, followed by watch() until it ends. */
+  struct WatchedShot
+  {
+    uint16_t id;
+    rclcpp::Time started;
+    std::optional<freezer_driver::Sequence> sequence;
+    uint8_t step;
+  };
+  // Used by the executor's thread only.
+  std::optional<WatchedShot> watched_;
 
   std::thread worker_;
   rclcpp_action::Server<Shoot>::SharedPtr action_server_;
   rclcpp::Service<SetOutputs>::SharedPtr set_outputs_service_;
   rclcpp::Service<Trigger>::SharedPtr stop_service_;
+  rclcpp::Service<Trigger>::SharedPtr press_trigger_service_;
+  rclcpp::Publisher<OutputsMsg>::SharedPtr outputs_publisher_;
+  rclcpp::Publisher<ShotMsg>::SharedPtr shots_publisher_;
+  rclcpp::TimerBase::SharedPtr watch_timer_;
 };
 }  // namespace freezer_node

@@ -81,7 +81,7 @@ struct FlashShotRecipe
 };
 
 /**
- * The shot of StepIt Old: focus, open the shutters, switch the lights on for
+ * The shot of the old firmware: focus, open the shutters, switch the lights on for
  * a given time, switch them off, then close the shutters. The controller
  * decides how long the subject is lit.
  */

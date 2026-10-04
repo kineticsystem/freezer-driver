@@ -4,6 +4,8 @@
 [![Format](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-format.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-format.yml)
 [![Linters](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-ros-lint.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-ros-lint.yml)
 
+<img src="docs/hardware/FreezerPCB.svg" width="50%">
+
 ## Table of Contents <!-- omit in toc -->
 
 - [Introduction](#introduction)
@@ -17,6 +19,7 @@
   - [Pre-Commit Hooks](#pre-commit-hooks)
   - [Build the Project](#build-the-project)
 - [Running the Application](#running-the-application)
+  - [The Board Page](#the-board-page)
   - [Parameters](#parameters)
 - [Troubleshooting](#troubleshooting)
 - [How to run GitHub Actions locally](#how-to-run-github-actions-locally)
@@ -28,10 +31,11 @@ Freezer Driver is a project to fire cameras and flashes from ROS2, through the F
 - Fire up to 7 cameras and a flash at the same time, with the timing of each step kept by a hardware timer of the Nano.
 - Load a sequence of steps once, each an output pattern and a hold time, and fire it with one short command, or with the remote trigger on IN1.
 - Switch outputs on and off outside a shot, e.g. the lights, and stop a shot at any time.
-- Talk to the Nano with the same framed, CRC-checked protocol as [StepIt Driver](https://github.com/kineticsystem/stepit-driver).
+- Watch the board in a web page: its outputs live, the commands, and the timing of every shot, against a fake controller or the real board.
+- Talk to the Nano with a framed, CRC-checked protocol of one request and one response.
 
 > [!WARNING]
-> The project is being built. The ideas and the decisions taken so far are in [Brainstorming.md](Brainstorming.md). The firmware and the ROS2 side fire shots, tested on a Nano on its own; they have not yet driven cameras through the Freezer board.
+> The project is being built. How it is built, and why, is in [ARCHITECTURE.md](docs/ARCHITECTURE.md); the ideas we weighed on the way are in [Brainstorming.md](Brainstorming.md). The firmware and the ROS2 side fire shots, tested on a Nano on its own; they have not yet driven cameras through the Freezer board.
 
 ## Prerequisites
 
@@ -39,7 +43,7 @@ To run Freezer Driver, we need a computer with Ubuntu 24.04 and ROS2 Jazzy. Plea
 
 Freezer Driver runs with a fake controller by default, so we do not need the board to try it. For a real application, we need the following hardware.
 
-- 1 x Freezer board, see `~/repo/freezer`.
+- 1 x Freezer board, see its circuit, PCB and Gerber files in [docs/hardware](docs/hardware/README.md).
 - 1 x [Arduino Nano 3.0](https://docs.arduino.cc/hardware/nano/), with the FTDI FT232R USB chip.
 - 1 x USB cable, mini-B, that carries data, not only power.
 
@@ -82,11 +86,11 @@ sudo setfacl -m u:$USER:rw /dev/ttyUSB0
 > [!IMPORTANT]
 > A Nano clone with a CH340 USB chip, `idVendor=1a86`, is taken by `brltty`, the service for braille displays: its port appears and disappears at once. If you do not use a braille display, remove it with `sudo apt remove brltty`. A Nano with an FTDI chip is not affected.
 
-No udev rule is required. StepIt Driver needs one because the Teensy is programmed over a USB HID interface; the Nano is programmed over its serial port, which the group `dialout` already covers.
+No udev rule is required: the Nano is programmed over its serial port, which the group `dialout` already covers.
 
 ### Flash the Firmware
 
-We develop the firmware with Visual Studio Code and the [PlatformIO](https://platformio.org) extension, as for StepIt Driver. Installing the Arduino IDE is not required.
+We develop the firmware with Visual Studio Code and the [PlatformIO](https://platformio.org) extension. Installing the Arduino IDE is not required.
 
 The firmware, version 2.0.0, answers `Info`, `Echo`, `LoadSequence`, `Shoot`, `Status`, `SetOutputs` and `Stop`, and fires the loaded sequence when IN1 is pressed, unless a shot is running or no sequence is loaded. Timer1 runs the shot: each step starts at its own time, within about 5 µs, measured on the Nano. A step must last at least 40 µs: shorter steps fall behind, one after the other. The driver refuses a firmware of another major version, e.g. 1.1.0: flash the firmware of the same workspace.
 
@@ -155,7 +159,7 @@ pre-commit install
 
 ### Build the Project
 
-The preferred way to build and run Freezer Driver is to use a Docker container, as for StepIt Driver. It is defined in [`docker/docker-compose.yml`](docker/docker-compose.yml) and driven by the [`docker/dock.sh`](docker/dock.sh) script. See [docker/README.md](docker/README.md) for more details.
+The preferred way to build and run Freezer Driver is to use a Docker container. It is defined in [`docker/docker-compose.yml`](docker/docker-compose.yml) and driven by the [`docker/dock.sh`](docker/dock.sh) script. See [docker/README.md](docker/README.md) for more details.
 
 > [!IMPORTANT]
 > The docker container provides a default user `developer` with password `developer`. That user may run `sudo` without being asked for it, so that the scripts in `bin` also work from a non-interactive shell, e.g.
@@ -175,19 +179,19 @@ Start the container with an interactive shell:
 
 The container is privileged and mounts `/dev`, so the Nano on `/dev/ttyUSB0` is reachable from inside it. The commands below assume you are inside the container.
 
-Install all required dependencies.
+Install all required dependencies, including the packages of the board page.
 
 ```
 update
 ```
 
-Run Colcon to build the project.
+Run Colcon to build the project, then build the board page into `web/dist`.
 
 ```
 build
 ```
 
-Execute all tests.
+Execute all tests, those of the board page first.
 
 ```
 test
@@ -197,12 +201,13 @@ The packages are the following.
 
 | Package | Role |
 |---|---|
-| `freezer_msgs` | the `Shoot` action, the `Step` message and the `SetOutputs` service |
+| `freezer_msgs` | the `Shoot` action, the `Step`, `Outputs` and `Shot` messages, and the `SetOutputs` service |
 | `freezer_driver` | the `Driver` interface, `DefaultDriver` over the serial port, `FakeDriver`, the sequence rules, the recipes, and `ShotRunner`, which runs one shot on a driver |
-| `freezer_node` | the node `freezer`: the `Shoot` action server, the services `set_outputs` and `stop`, its parameters and its launch file |
-| `framed_serial` | the framed serial protocol, shared with StepIt Driver, in the submodule `modules/framed-serial`, from [framed-serial](https://github.com/kineticsystem/framed-serial) |
+| `freezer_node` | the node `freezer`: the `Shoot` action server, the services `set_outputs` and `stop`, the topics `outputs` and `shots`, its parameters and its launch file |
+| `framed_serial` | the framed serial protocol, in the submodule `modules/framed-serial`, from [framed-serial](https://github.com/kineticsystem/framed-serial) |
 | `serial` | the serial port library, in the submodule `modules/serial`, from [serial](https://github.com/kineticsystem/serial), branch `ros2` |
 | `freezer_mcu` | the PlatformIO project of the Nano, in `src/freezer_mcu`, not built by colcon |
+| `web` | the board page, in React and TypeScript, built with Vite and pnpm, not built by colcon |
 
 ## Running the Application
 
@@ -248,7 +253,18 @@ To stop a shot where it is, and switch every output off, call `stop`. The goal o
 ros2 service call /freezer/stop std_srvs/srv/Trigger
 ```
 
-Pressing the remote trigger, on IN1, fires the sequence loaded last, without the node; nothing is fired before the node has loaded one. A goal sent while that shot runs aborts: the controller is busy.
+Pressing the remote trigger, on IN1, fires the sequence loaded last, without the node; nothing is fired before the node has loaded one. A goal sent while that shot runs aborts: the controller is busy. The node sees that shot by polling the controller while it is idle, and tells it on `~/shots` like its own. With the fake controller, a service presses IN1:
+
+```
+ros2 service call /freezer/fake/press_trigger std_srvs/srv/Trigger
+```
+
+The node tells what the board does on two topics, which keep their last message for a client that subscribes late: `~/outputs`, the pattern of the outputs whenever it changes, and `~/shots`, each shot when it starts, with its steps, and when it ends.
+
+```
+ros2 topic echo /freezer/outputs
+ros2 topic echo /freezer/shots
+```
 
 To use the Freezer board, set the launch argument `use_fake`:
 
@@ -257,6 +273,23 @@ ros2 launch freezer_node freezer.launch.py use_fake:=false usb_port:=/dev/ttyUSB
 ```
 
 The result of a shot reports `worst_lateness_us`, the latest a step started after its time, as the controller measured it. Measured with firmware 1.1.0, whose Timer1 code 2.0.0 keeps, it is about 5 µs.
+
+### The Board Page
+
+The launch file also serves the board page, on [http://localhost:8092](http://localhost:8092), and starts the rosbridge it talks to the node through, on port 9092. The page fires the commands, and draws the timing of each shot, a row per line, as a logic analyser does.
+
+![The board page during a shot](docs/images/board-page.png)
+
+- **The commands.** Pick a sequence of the parameters and shoot it, stop a shot, switch every output off, or press IN1 of the fake controller.
+- **The shots.** The timing of the latest shot, or of the one picked in the list below it. A page that opens shows the last shot the node told of, and every shot after it. It is drawn from the shot's table, which the controller runs exactly: the times are the table's, to the microsecond, not those at which the messages reached the page. Hover over it to read the time and the step.
+
+`build` builds the page into `web/dist`; the launch file serves nothing until it is built. To run the page without them, set `web:=false`. To work on the page, with hot reload, run its development server on port 5175 next to the launched node:
+
+```
+cd ~/ws/web && pnpm dev
+```
+
+The page connects to `ws://<host>:9092`, where `<host>` is the machine that served it; another rosbridge can be set in the field at the top of the page.
 
 ### Parameters
 
@@ -271,6 +304,7 @@ The parameters are in [`config/freezer.yaml`](src/freezer_node/config/freezer.ya
 | `connect_delay` | `1.0` | Seconds to wait after opening the port: the Nano resets and its bootloader runs first. |
 | `poll_period` | `0.01` | Seconds between two status queries during a shot. |
 | `end_margin` | `0.1` | Seconds after the duration of a shot before the node gives up on it. |
+| `watch_period` | `0.2` | Seconds between two status queries while no goal runs, to see the shots of the remote trigger. 0 stops the queries. |
 | `default_sequence` | `flash_shot` | The sequence of a goal that names none. |
 | `sequence_names` | `[flash_shot, timed_light]` | The sequences under `sequences`. A ROS2 node must declare a parameter before reading it, and these names tell it which to declare. |
 
