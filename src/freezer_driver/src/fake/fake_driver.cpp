@@ -51,7 +51,7 @@ void FakeDriver::disconnect()
 InfoResponse FakeDriver::get_info()
 {
   InfoResponse response{ Response::Status::Success };
-  response.version = Version{ 1, 1, 0 };
+  response.version = Version{ 2, 0, 0 };
   response.limits = kLimits;
   response.name = "FREEZER";
   return response;
@@ -71,12 +71,11 @@ LoadSequenceResponse FakeDriver::load_sequence(const Sequence& sequence)
   }
   loaded_ = sequence;
   LoadSequenceResponse response{ Response::Status::Success };
-  response.checksum = sequence.checksum();
   response.duration_us = static_cast<uint32_t>(sequence.duration_us());
   return response;
 }
 
-ShootResponse FakeDriver::shoot(uint16_t checksum)
+ShootResponse FakeDriver::shoot()
 {
   update();
   if (running_)
@@ -87,27 +86,57 @@ ShootResponse FakeDriver::shoot(uint16_t checksum)
   {
     return ShootResponse{ Response::Status::Failure, Response::Reason::NoTable };
   }
-  if (loaded_->checksum() != checksum)
-  {
-    return ShootResponse{ Response::Status::Failure, Response::Reason::WrongTable };
-  }
 
-  running_ = true;
-  start_ = clock_();
-  last_shot_id_ = next_shot_id_;
-  next_shot_id_ = static_cast<uint16_t>(next_shot_id_ == 0xFFFF ? 1 : next_shot_id_ + 1);
-
-  auto time = start_;
-  for (const auto& step : loaded_->steps())
-  {
-    timeline_.push_back(Latch{ time, step.outputs });
-    time += std::chrono::microseconds{ step.hold_us };
-  }
-
+  start();
   ShootResponse response{ Response::Status::Success };
   response.shot_id = last_shot_id_;
   response.duration_us = static_cast<uint32_t>(loaded_->duration_us());
   return response;
+}
+
+Response FakeDriver::set_outputs(uint16_t outputs)
+{
+  update();
+  if (running_)
+  {
+    return Response{ Response::Status::Failure, Response::Reason::Busy };
+  }
+  latch_now(outputs);
+  return Response{ Response::Status::Success };
+}
+
+Response FakeDriver::stop()
+{
+  update();
+  running_ = false;
+  latch_now(0);
+  return Response{ Response::Status::Success };
+}
+
+bool FakeDriver::trigger()
+{
+  update();
+  if (running_ || !loaded_)
+  {
+    return false;
+  }
+  start();
+  return true;
+}
+
+uint16_t FakeDriver::outputs() const
+{
+  const auto now = clock_();
+  uint16_t outputs = 0;
+  for (const auto& latch : timeline_)
+  {
+    if (latch.time > now)
+    {
+      break;
+    }
+    outputs = latch.outputs;
+  }
+  return outputs;
 }
 
 StatusResponse FakeDriver::get_status()
@@ -119,7 +148,6 @@ StatusResponse FakeDriver::get_status()
   update();
 
   StatusResponse response{ Response::Status::Success };
-  response.checksum = loaded_ ? loaded_->checksum() : 0;
   response.last_shot_id = last_shot_id_;
   response.worst_lateness_us = worst_lateness_us_;
   if (running_)
@@ -168,6 +196,31 @@ void FakeDriver::reset()
   next_shot_id_ = 1;
   last_shot_id_ = 0;
   worst_lateness_us_ = 0;
+}
+
+void FakeDriver::start()
+{
+  running_ = true;
+  start_ = clock_();
+  last_shot_id_ = next_shot_id_;
+  next_shot_id_ = static_cast<uint16_t>(next_shot_id_ == 0xFFFF ? 1 : next_shot_id_ + 1);
+
+  auto time = start_;
+  for (const auto& step : loaded_->steps())
+  {
+    timeline_.push_back(Latch{ time, step.outputs });
+    time += std::chrono::microseconds{ step.hold_us };
+  }
+}
+
+void FakeDriver::latch_now(uint16_t outputs)
+{
+  const auto now = clock_();
+  while (!timeline_.empty() && timeline_.back().time > now)
+  {
+    timeline_.pop_back();
+  }
+  timeline_.push_back(Latch{ now, outputs });
 }
 
 void FakeDriver::update()

@@ -122,8 +122,10 @@ private:
   Clock clock_;
   Sleep sleep_;
 
-  // What the runner believes is loaded in the controller. Reset whenever the
-  // controller may have lost it, so the next shot loads it again.
-  std::optional<uint16_t> loaded_checksum_;
+  // The sequence the runner loaded last, which it believes is still in the
+  // controller. Reset whenever the controller may have lost it, so the next
+  // shot loads it again. The controller does not tell which table it holds:
+  // only the runner may load one.
+  std::optional<Sequence> loaded_;
 };
 }  // namespace freezer_driver

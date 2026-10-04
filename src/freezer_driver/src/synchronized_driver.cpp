@@ -26,32 +26,59 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#pragma once
-
-#include <cstdint>
-
-#include <freezer_driver/msgs/response.hpp>
+#include <freezer_driver/synchronized_driver.hpp>
 
 namespace freezer_driver
 {
-/**
- * The answer to Status. A shot is over for the host when the controller is
- * idle and its last shot id is the one Shoot returned.
- */
-struct StatusResponse : public Response
+SynchronizedDriver::SynchronizedDriver(std::unique_ptr<Driver> driver) : driver_{ std::move(driver) }
 {
-  using Response::Response;
+}
 
-  enum class State : uint8_t
-  {
-    Idle = 0x00,
-    Running = 0x01,
-  };
+bool SynchronizedDriver::connect()
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->connect();
+}
 
-  State state = State::Idle;
-  uint16_t last_shot_id = 0;       // The shot running, or the last one; 0 when none since power on.
-  uint8_t step = 0;                // The step running, when running.
-  uint32_t elapsed_us = 0;         // Time since the start of the shot, when running.
-  uint32_t worst_lateness_us = 0;  // Of the last shot.
-};
+void SynchronizedDriver::disconnect()
+{
+  std::lock_guard lock{ mutex_ };
+  driver_->disconnect();
+}
+
+InfoResponse SynchronizedDriver::get_info()
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->get_info();
+}
+
+LoadSequenceResponse SynchronizedDriver::load_sequence(const Sequence& sequence)
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->load_sequence(sequence);
+}
+
+ShootResponse SynchronizedDriver::shoot()
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->shoot();
+}
+
+Response SynchronizedDriver::set_outputs(uint16_t outputs)
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->set_outputs(outputs);
+}
+
+Response SynchronizedDriver::stop()
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->stop();
+}
+
+StatusResponse SynchronizedDriver::get_status()
+{
+  std::lock_guard lock{ mutex_ };
+  return driver_->get_status();
+}
 }  // namespace freezer_driver

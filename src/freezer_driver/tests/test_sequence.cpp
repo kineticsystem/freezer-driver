@@ -60,15 +60,6 @@ TEST(TestSequence, encode)
   EXPECT_EQ(two_steps().encode(), expected);
 }
 
-/**
- * The checksum is the CRC-16 Kermit of the payload, which the firmware
- * computes with the same code.
- */
-TEST(TestSequence, checksum)
-{
-  EXPECT_EQ(two_steps().checksum(), 0x1D0A);
-}
-
 TEST(TestSequence, duration)
 {
   EXPECT_EQ(two_steps().duration_us(), 0x00030405u + 20u);

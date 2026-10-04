@@ -61,11 +61,13 @@ add_library(
     include/freezer_driver/recipes.hpp
     include/freezer_driver/sequence.hpp
     include/freezer_driver/shot_runner.hpp
+    include/freezer_driver/synchronized_driver.hpp
     src/default_driver.cpp
     src/fake/fake_driver.cpp
     src/recipes.cpp
     src/sequence.cpp
     src/shot_runner.cpp
+    src/synchronized_driver.cpp
 )
 target_include_directories(
     freezer_driver

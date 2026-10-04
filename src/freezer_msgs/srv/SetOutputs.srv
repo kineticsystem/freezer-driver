@@ -1,0 +1,13 @@
+# Latch a pattern on the 16 outputs of the Freezer board, e.g. to switch the
+# lights on or off, where it stays until the next one, a shot, or a stop.
+# Refused while a shot runs: the shot owns the outputs.
+
+# One bit per optocoupler, as in freezer_msgs/Step.
+uint16 outputs
+
+---
+
+bool success
+
+# Why the outputs did not change, empty on success.
+string message

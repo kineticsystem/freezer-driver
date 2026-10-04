@@ -41,10 +41,10 @@ using ::testing::Return;
 using ::testing::Throw;
 
 /**
- * The answer of the firmware to Info, as read from the Nano: version 1.0.0,
- * 16 steps, 40 µs, 10 s and the name.
+ * The answer of the firmware to Info: version 2.0.0, 16 steps, 40 µs, 10 s
+ * and the name.
  */
-std::vector<uint8_t> info_response(const std::string& name = "FREEZER", uint8_t version_major = 1)
+std::vector<uint8_t> info_response(const std::string& name = "FREEZER", uint8_t version_major = 2)
 {
   std::vector<uint8_t> out{
     0x11,                             // status success
@@ -77,7 +77,7 @@ TEST_F(TestDefaultDriver, get_info)
 
   const InfoResponse response = driver->get_info();
   EXPECT_TRUE(response.success());
-  EXPECT_EQ(response.version.to_string(), "1.0.0");
+  EXPECT_EQ(response.version.to_string(), "2.0.0");
   EXPECT_EQ(response.limits.max_steps, 16);
   EXPECT_EQ(response.limits.min_hold_us, 40u);
   EXPECT_EQ(response.limits.max_duration_us, 10'000'000u);
@@ -117,7 +117,7 @@ TEST_F(TestDefaultDriver, connect_refuses_another_protocol_version)
 {
   EXPECT_CALL(*serial, open());
   EXPECT_CALL(*serial, write(_)).Times(1);
-  EXPECT_CALL(*serial, read()).WillOnce(Return(info_response("FREEZER", 2)));
+  EXPECT_CALL(*serial, read()).WillOnce(Return(info_response("FREEZER", 1)));
   EXPECT_FALSE(driver->connect());
 }
 
@@ -147,19 +147,17 @@ TEST_F(TestDefaultDriver, load_sequence)
   EXPECT_CALL(*serial, read())
       .WillOnce(Return(std::vector<uint8_t>{
           0x11,                    // status success
-          0xAB, 0xCD,              // checksum
           0x00, 0x04, 0x93, 0xE0,  // duration, 300 ms
       }));
 
   const LoadSequenceResponse response = driver->load_sequence(sequence);
   EXPECT_TRUE(response.success());
-  EXPECT_EQ(response.checksum, 0xABCD);
   EXPECT_EQ(response.duration_us, 300'000u);
 }
 
 TEST_F(TestDefaultDriver, shoot)
 {
-  EXPECT_CALL(*serial, write(std::vector<uint8_t>{ 0x7C, 0xAB, 0xCD }));
+  EXPECT_CALL(*serial, write(std::vector<uint8_t>{ 0x7C }));
   EXPECT_CALL(*serial, read())
       .WillOnce(Return(std::vector<uint8_t>{
           0x11,                    // status success
@@ -167,7 +165,7 @@ TEST_F(TestDefaultDriver, shoot)
           0x00, 0x04, 0x93, 0xE0,  // duration, 300 ms
       }));
 
-  const ShootResponse response = driver->shoot(0xABCD);
+  const ShootResponse response = driver->shoot();
   EXPECT_TRUE(response.success());
   EXPECT_EQ(response.shot_id, 7);
   EXPECT_EQ(response.duration_us, 300'000u);
@@ -176,11 +174,37 @@ TEST_F(TestDefaultDriver, shoot)
 TEST_F(TestDefaultDriver, shoot_refused)
 {
   EXPECT_CALL(*serial, write(_));
-  EXPECT_CALL(*serial, read()).WillOnce(Return(std::vector<uint8_t>{ 0x12, 0x05 }));
+  EXPECT_CALL(*serial, read()).WillOnce(Return(std::vector<uint8_t>{ 0x12, 0x04 }));
 
-  const ShootResponse response = driver->shoot(0xABCD);
+  const ShootResponse response = driver->shoot();
   EXPECT_FALSE(response.success());
-  EXPECT_EQ(response.reason(), Response::Reason::WrongTable);
+  EXPECT_EQ(response.reason(), Response::Reason::NoTable);
+}
+
+TEST_F(TestDefaultDriver, set_outputs)
+{
+  EXPECT_CALL(*serial, write(std::vector<uint8_t>{ 0x77, 0xC0, 0x01 }));
+  EXPECT_CALL(*serial, read()).WillOnce(Return(std::vector<uint8_t>{ 0x11 }));
+
+  EXPECT_TRUE(driver->set_outputs(0xC001).success());
+}
+
+TEST_F(TestDefaultDriver, set_outputs_refused_during_a_shot)
+{
+  EXPECT_CALL(*serial, write(_));
+  EXPECT_CALL(*serial, read()).WillOnce(Return(std::vector<uint8_t>{ 0x12, 0x03 }));
+
+  const Response response = driver->set_outputs(0xC000);
+  EXPECT_FALSE(response.success());
+  EXPECT_EQ(response.reason(), Response::Reason::Busy);
+}
+
+TEST_F(TestDefaultDriver, stop)
+{
+  EXPECT_CALL(*serial, write(std::vector<uint8_t>{ 0x78 }));
+  EXPECT_CALL(*serial, read()).WillOnce(Return(std::vector<uint8_t>{ 0x11 }));
+
+  EXPECT_TRUE(driver->stop().success());
 }
 
 TEST_F(TestDefaultDriver, get_status)
@@ -190,7 +214,6 @@ TEST_F(TestDefaultDriver, get_status)
       .WillOnce(Return(std::vector<uint8_t>{
           0x11,                    // status success
           0x01,                    // state running
-          0xAB, 0xCD,              // checksum
           0x00, 0x07,              // last shot id
           0x02,                    // step
           0x00, 0x03, 0x0D, 0x40,  // elapsed, 200 ms
@@ -200,7 +223,6 @@ TEST_F(TestDefaultDriver, get_status)
   const StatusResponse response = driver->get_status();
   EXPECT_TRUE(response.success());
   EXPECT_EQ(response.state, StatusResponse::State::Running);
-  EXPECT_EQ(response.checksum, 0xABCD);
   EXPECT_EQ(response.last_shot_id, 7);
   EXPECT_EQ(response.step, 2);
   EXPECT_EQ(response.elapsed_us, 200'000u);

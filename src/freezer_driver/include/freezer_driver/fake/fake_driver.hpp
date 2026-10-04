@@ -81,8 +81,20 @@ public:
   void disconnect() override;
   InfoResponse get_info() override;
   LoadSequenceResponse load_sequence(const Sequence& sequence) override;
-  ShootResponse shoot(uint16_t checksum) override;
+  ShootResponse shoot() override;
+  Response set_outputs(uint16_t outputs) override;
+  Response stop() override;
   StatusResponse get_status() override;
+
+  /**
+   * Press IN1, the remote trigger: fire the loaded sequence, unless a shot is
+   * running or none is loaded.
+   * @return True when a shot started.
+   */
+  bool trigger();
+
+  /** The pattern on the outputs now. */
+  uint16_t outputs() const;
 
   void set_failure(Failure failure);
 
@@ -106,6 +118,12 @@ private:
 
   /** End the running shot if its time is over. */
   void update();
+
+  /** Start a shot of the loaded sequence: not running, and one is loaded. */
+  void start();
+
+  /** Forget the latches of a shot that ended early, then latch outputs now. */
+  void latch_now(uint16_t outputs);
 
   Clock clock_;
   Failure failure_ = Failure::None;

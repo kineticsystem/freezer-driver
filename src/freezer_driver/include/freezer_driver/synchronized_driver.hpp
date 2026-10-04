@@ -29,29 +29,37 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <mutex>
 
-#include <freezer_driver/msgs/response.hpp>
+#include <freezer_driver/driver.hpp>
 
 namespace freezer_driver
 {
 /**
- * The answer to Status. A shot is over for the host when the controller is
- * idle and its last shot id is the one Shoot returned.
+ * @brief A driver that several threads can share: it forwards each call to
+ * the driver it wraps, one at a time.
+ *
+ * A call is a request and its response, so one thread can stop a shot that
+ * another is polling: the stop goes between two status queries, never in the
+ * middle of one.
  */
-struct StatusResponse : public Response
+class SynchronizedDriver : public Driver
 {
-  using Response::Response;
+public:
+  explicit SynchronizedDriver(std::unique_ptr<Driver> driver);
 
-  enum class State : uint8_t
-  {
-    Idle = 0x00,
-    Running = 0x01,
-  };
+  bool connect() override;
+  void disconnect() override;
+  InfoResponse get_info() override;
+  LoadSequenceResponse load_sequence(const Sequence& sequence) override;
+  ShootResponse shoot() override;
+  Response set_outputs(uint16_t outputs) override;
+  Response stop() override;
+  StatusResponse get_status() override;
 
-  State state = State::Idle;
-  uint16_t last_shot_id = 0;       // The shot running, or the last one; 0 when none since power on.
-  uint8_t step = 0;                // The step running, when running.
-  uint32_t elapsed_us = 0;         // Time since the start of the shot, when running.
-  uint32_t worst_lateness_us = 0;  // Of the last shot.
+private:
+  std::unique_ptr<Driver> driver_;
+  std::mutex mutex_;
 };
 }  // namespace freezer_driver

@@ -45,7 +45,6 @@ namespace
 uint16_t outputs[MAX_STEPS];
 uint32_t holdTicks[MAX_STEPS];
 byte count = 0;
-uint16_t checksum = 0;
 uint32_t durationUs = 0;
 
 // The state of the shot, shared with the interrupt.
@@ -167,7 +166,7 @@ void init()
   }
 }
 
-void load(const Step* steps, byte stepCount, uint16_t tableChecksum, uint32_t tableDurationUs)
+void load(const Step* steps, byte stepCount, uint32_t tableDurationUs)
 {
   for (byte i = 0; i < stepCount; i++)
   {
@@ -175,8 +174,34 @@ void load(const Step* steps, byte stepCount, uint16_t tableChecksum, uint32_t ta
     holdTicks[i] = steps[i].holdUs * 2;
   }
   count = stepCount;
-  checksum = tableChecksum;
   durationUs = tableDurationUs;
+}
+
+bool setOutputs(uint16_t pattern)
+{
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+  {
+    if (running)
+    {
+      return false;
+    }
+    shiftPattern(pattern);
+    latchPattern();
+  }
+  return true;
+}
+
+void stop()
+{
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+  {
+    // The shift stage may hold the next pattern of the shot: zeros replace it.
+    running = false;
+    TIMSK1 &= ~_BV(OCIE1A);
+    TIFR1 = _BV(OCF1A);
+    shiftPattern(0);
+    latchPattern();
+  }
 }
 
 uint32_t duration()
@@ -220,7 +245,6 @@ Status status()
     result.worstLatenessUs = (worstLatenessTicks + 1) / 2;
   }
   result.loaded = count > 0;
-  result.checksum = checksum;
   result.lastShotId = lastShotId;
   return result;
 }
