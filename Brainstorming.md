@@ -865,7 +865,7 @@ The fake driver and the firmware sequencer must not drift apart. Sharing the val
 
 ## Seeing the Board
 
-We want to run the driver against the fake controller and watch what happens: which outputs close, in which order, for how long. A URDF in RViz does not fit: it moves links from joint states, but their colours are fixed, so it cannot light a switch. PlotJuggler draws a timing diagram well, but only shows data: the shots would still be fired from a terminal. So the board gets a page of its own, which fires the commands and draws the timing of each shot, against the fake controller and against the real board alike. A drawing of the board, its jacks lit live, was tried and dropped: the timing of the shots already shows what the outputs did.
+We want to run the driver against the fake controller and watch what happens: which outputs close, in which order, for how long. A URDF in RViz does not fit: it moves links from joint states, but their colours are fixed, so it cannot light a switch. PlotJuggler draws a timing diagram well, but only shows data: the shots would still be fired from a terminal. So the board gets a page of its own, which fires the commands and draws the timing of each shot, against the fake controller and against the real board alike. On each row of the timing, an LED lights the line as it is now: it shows what no shot does, e.g. All on, which a diagram of shots cannot. A live, scrolling timeline was considered for the same purpose, and rejected as less readable.
 
 ### What the Node Tells
 
@@ -888,14 +888,14 @@ The page lives in `web`, in React and TypeScript, built with Vite and pnpm. It i
 
 - **It reaches the node through rosbridge,** a WebSocket that speaks JSON, so that the browser needs no ROS. The launch file starts a rosbridge of its own, on port 9092, because a rosbridge only knows the messages installed next to it, `freezer_msgs` here.
 - **The launch file serves it,** built, with Python's HTTP server, on port 8092, so that running it needs neither Node.js nor a server of our own. `web=false` leaves both out.
-- **The commands:** a sequence of the parameters to shoot, stop, all off, and press IN1 of the fake controller.
-- **The timing of a shot:** a row per line, high while it is closed, as a logic analyser draws it, drawn from the table; a cursor follows a running shot, and a stopped one is cut where it stopped. The page keeps the last 50 shots, the node's and the trigger's, and draws the one picked.
+- **The commands:** one of the node's sequences to send, listed as example 1, example 2 and so on, stop, all on and all off, and press IN1 of the fake controller.
+- **The timing of a shot:** a row per line, named after the contact of the plug, tip or ring, since the jacks are alike and only the sequence decides what each drives; high while it is closed, as a logic analyser draws it, drawn from the table; a cursor follows a running shot, and a stopped one is cut where it stopped. The page draws the latest shot, the node's or the trigger's, with the LED of each line on its row.
 
 The diagram is plain SVG, drawn by the page: 16 lines and a few dozen changes need no chart library.
 
 ### What It Cannot Show
 
-The page shows the logic of a shot: which outputs, in which order, for how long, at the scale of milliseconds. It cannot show how precisely the controller ran it: the timing it draws is the table's, what the controller was told, not a measurement. The controller measures itself only as the worst lateness of a shot, which the page shows next to it, and only a logic analyser on `ST_CP` shows the real latches.
+The page shows the logic of a shot: which outputs, in which order, for how long, at the scale of milliseconds. It cannot show how precisely the controller ran it: the timing it draws is the table's, what the controller was told, not a measurement. The controller measures itself only as the worst lateness of a shot, in the result of the action and on `~/shots`, and only a logic analyser on `ST_CP` shows the real latches.
 
 ## Safety
 

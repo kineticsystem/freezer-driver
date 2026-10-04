@@ -1,5 +1,5 @@
 // The commands: fire a sequence of the node's parameters, stop, switch every
-// output off, and press IN1 of a fake controller.
+// output on or off, and press IN1 of a fake controller.
 
 import { useEffect, useState } from 'react';
 import type { Freezer } from '../freezer/freezer';
@@ -10,10 +10,17 @@ interface Props {
   running: boolean;
 }
 
+/** What the menu shows for the sequence at this index: the default one first. */
+export function sequenceLabel(index: number): string {
+  return `example ${index + 1}`;
+}
+
 export function Controls({ freezer, connected, running }: Props) {
   const [names, setNames] = useState<string[]>([]);
   const [sequence, setSequence] = useState('');
-  const [message, setMessage] = useState<{ text: string; error: boolean }>();
+  // Why the last command failed; a command that succeeds says nothing, its
+  // effect shows on the lines.
+  const [error, setError] = useState<string>();
 
   // The sequences of the node, once connected.
   useEffect(() => {
@@ -32,22 +39,22 @@ export function Controls({ freezer, connected, running }: Props) {
     };
   }, [freezer, connected]);
 
-  const report = async (action: () => Promise<{ success: boolean; message: string }>, done: string) => {
+  const report = async (action: () => Promise<{ success: boolean; message: string }>) => {
     try {
       const response = await action();
-      setMessage(response.success ? { text: done, error: false } : { text: response.message, error: true });
+      setError(response.success ? undefined : response.message);
     } catch (e) {
-      setMessage({ text: e instanceof Error ? e.message : String(e), error: true });
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
   const shoot = async () => {
-    setMessage({ text: `Shooting ${sequence || 'the default sequence'}…`, error: false });
+    setError(undefined);
     const result = await freezer.shoot({ sequence });
-    if (result.outcome === 'succeeded') {
-      setMessage({ text: `Shot ${result.values?.shot_id} done.`, error: false });
-    } else {
-      setMessage({ text: result.values?.message || result.error || `The shot ${result.outcome}.`, error: true });
+    const message = result.values?.message || result.error || `The shot ${result.outcome}.`;
+    // A shot ended by Stop is what was asked for, not an error.
+    if (result.outcome !== 'succeeded' && !message.startsWith('Stopped')) {
+      setError(message);
     }
   };
 
@@ -64,36 +71,43 @@ export function Controls({ freezer, connected, running }: Props) {
           aria-label="Sequence"
         >
           {names.length === 0 && <option value="">default sequence</option>}
-          {names.map((name) => (
-            <option key={name} value={name}>
-              {name}
+          {names.map((name, index) => (
+            <option key={name} value={name} title={name}>
+              {sequenceLabel(index)}
             </option>
           ))}
         </select>
         <button className="primary" disabled={!connected || running} onClick={shoot}>
-          Shoot
+          Send
         </button>
-        <button className="danger" disabled={!connected} onClick={() => report(() => freezer.stop(), 'Stopped.')}>
+        <button className="danger" disabled={!connected} onClick={() => report(() => freezer.stop())}>
           Stop
         </button>
       </div>
       <div className="control-row">
         <button
           disabled={!connected || running}
-          onClick={() => report(() => freezer.setOutputs(0), 'Every output is off.')}
+          title="Close every line of every jack, until All off: a camera plugged in focuses and holds its shutter open"
+          onClick={() => report(() => freezer.setOutputs(0xffff))}
+        >
+          All on
+        </button>
+        <button
+          disabled={!connected || running}
+          onClick={() => report(() => freezer.setOutputs(0))}
         >
           All off
         </button>
         <button
           disabled={!connected}
           title="Press the remote trigger of a fake controller: it fires the sequence loaded last"
-          onClick={() => report(() => freezer.pressTrigger(), 'IN1 pressed.')}
+          onClick={() => report(() => freezer.pressTrigger())}
         >
           Press IN1
         </button>
       </div>
-      <p className={`message ${message?.error ? 'error' : ''}`} role="status">
-        {message?.text ?? ' '}
+      <p className="message error" role="status">
+        {error ?? '\u00a0'}
       </p>
     </section>
   );

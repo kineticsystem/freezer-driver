@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { boundaries, formatDuration, spansOf, stepAt, ticks, usedBits } from '../src/freezer/timeline';
 
-// Focus 100 ms, focus and shutter 100 ms, release 200 ms, on OUT1.
+// A camera on OUT1: the ring 100 ms, ring and tip 100 ms, release 200 ms.
 const SHOT = [
   { outputs: 0x0002, hold_us: 100_000 },
   { outputs: 0x0003, hold_us: 100_000 },
@@ -38,7 +38,7 @@ describe('the timeline of a shot', () => {
     ]);
   });
 
-  it('lists the lines the shot uses, focus first', () => {
+  it('lists the lines the shot uses, ring first', () => {
     expect(usedBits(SHOT)).toEqual([1, 0]);
   });
 

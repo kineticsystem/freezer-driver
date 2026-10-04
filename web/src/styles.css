@@ -97,13 +97,6 @@ button.danger {
   border-color: var(--danger);
 }
 
-button.link {
-  border: none;
-  background: none;
-  color: var(--accent);
-  padding: 0;
-}
-
 .muted {
   color: var(--muted);
 }
@@ -232,44 +225,19 @@ button.link {
 }
 
 /* The shots. */
-.badge {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.badge.state-stopped,
-.badge.state-failed {
-  background: none;
-  border: 1px solid var(--danger);
-  color: var(--danger);
-}
-
-.badge.state-ended {
-  color: var(--ok);
-  background: none;
-  border: 1px solid var(--ok);
-}
-
 .timing {
   overflow: hidden;
 }
 
-.timing-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: center;
-  margin-bottom: 6px;
+.hint {
+  margin: 0 0 8px;
   font-size: 12px;
 }
 
-.check {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.hover-readout {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .timing svg {
@@ -290,10 +258,6 @@ button.link {
   fill: var(--text);
 }
 
-.timing .unused .label {
-  fill: var(--muted);
-}
-
 .timing .trace {
   fill: none;
   stroke: var(--trace);
@@ -302,6 +266,23 @@ button.link {
 
 .timing .high {
   fill: var(--trace-fill);
+}
+
+/* The LED of each line, lit while the line is closed now. */
+.timing .led {
+  fill: var(--border);
+  transition: fill 80ms;
+}
+
+.timing .led.on {
+  fill: var(--led-on);
+  filter: drop-shadow(0 0 3px var(--led-on));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timing .led {
+    transition: none;
+  }
 }
 
 .timing .cursor {
@@ -318,32 +299,4 @@ button.link {
 .timing .hover {
   stroke: var(--muted);
   stroke-dasharray: 2 3;
-}
-
-.shot-list {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 14px;
-  font-size: 13px;
-}
-
-.shot-list th,
-.shot-list td {
-  text-align: left;
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.shot-list th {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.shot-list tbody tr {
-  cursor: pointer;
-}
-
-.shot-list tbody tr:hover,
-.shot-list tr.selected {
-  background: var(--accent-soft);
 }

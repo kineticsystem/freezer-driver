@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { Controls } from './components/Controls';
 import { Shots } from './components/Shots';
+import { isRunning, runningUntil } from './freezer/freezer';
 import { defaultRosbridgeUrl, useFreezer } from './freezer/useFreezer';
 
 const URL_KEY = 'freezer.rosbridge';
@@ -20,7 +21,19 @@ export function App() {
   const [draft, setDraft] = useState(url);
   const { freezer, state } = useFreezer(url);
   const connected = state.status === 'connected';
-  const running = state.shots.some((shot) => shot.state === 'running');
+  const now = Date.now();
+  const running = state.shots.some((shot) => isRunning(shot, now));
+
+  // Render again when a shot whose end never came stops counting as running.
+  const [, refresh] = useReducer((n: number) => n + 1, 0);
+  const nextExpiry = Math.min(
+    ...state.shots.filter((shot) => isRunning(shot, now)).map(runningUntil),
+  );
+  useEffect(() => {
+    if (!Number.isFinite(nextExpiry)) return;
+    const timer = setTimeout(refresh, Math.max(0, nextExpiry - Date.now()) + 50);
+    return () => clearTimeout(timer);
+  }, [nextExpiry]);
 
   const apply = () => {
     setUrl(draft);
@@ -53,7 +66,7 @@ export function App() {
       </header>
       <main className="layout">
         <Controls freezer={freezer} connected={connected} running={running} />
-        <Shots shots={state.shots} />
+        <Shots shots={state.shots} outputs={state.outputs} />
       </main>
     </div>
   );
