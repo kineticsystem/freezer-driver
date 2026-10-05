@@ -73,6 +73,14 @@ def generate_launch_description():
     )
     return LaunchDescription(
         [
+            # Loaded after freezer.yaml, and before the launch arguments: a
+            # robot that runs the Freezer sets its own values, e.g. the
+            # sequences, without changing this package.
+            DeclareLaunchArgument(
+                "params_file",
+                default_value=config,
+                description="A parameter file loaded after freezer.yaml.",
+            ),
             DeclareLaunchArgument(
                 "use_fake",
                 default_value="true",
@@ -110,6 +118,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     config,
+                    LaunchConfiguration("params_file"),
                     {
                         "use_fake": ParameterValue(use_fake, value_type=bool),
                         "usb_port": usb_port,
