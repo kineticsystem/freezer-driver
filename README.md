@@ -293,7 +293,11 @@ The page connects to `ws://<host>:9092`, where `<host>` is the machine that serv
 
 ### Parameters
 
-The parameters are in [`config/freezer.yaml`](src/freezer_node/config/freezer.yaml).
+The parameters are in [`config/freezer.yaml`](src/freezer_node/config/freezer.yaml). To change them without editing it, e.g. from a robot that runs the Freezer, give a parameter file of our own, with a section `freezer`, in the launch argument `params_file`: it is loaded after `freezer.yaml`. The launch arguments `use_fake` and `usb_port` are applied last, and win over both files.
+
+```
+ros2 launch freezer_node freezer.launch.py params_file:=/path/to/robot.yaml
+```
 
 | Parameter | Default | Description |
 |---|---|---|
