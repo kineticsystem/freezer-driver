@@ -1,4 +1,4 @@
-# Freezer Driver Architecture
+# StepIt Freezer Architecture
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -36,7 +36,7 @@
 
 ## Introduction
 
-This document explains how Freezer Driver is built: the board, the protocol, the firmware of the Nano and the ROS2 side, what each part is responsible for, and why it is built that way. It describes the code as it is, firmware and protocol version 2.0.0. It assumes we have read the [README](../README.md). [Brainstorming.md](../Brainstorming.md) keeps the ideas we weighed on the way, including the ones we dropped.
+This document explains how StepIt Freezer is built: the board, the protocol, the firmware of the Nano and the ROS2 side, what each part is responsible for, and why it is built that way. It describes the code as it is, firmware and protocol version 2.0.0. It assumes we have read the [README](../README.md). [Brainstorming.md](../Brainstorming.md) keeps the ideas we weighed on the way, including the ones we dropped.
 
 It follows one rule: **once a shot starts, its timing belongs to the controller, and only a stop interrupts it**. The host loads a table of steps, asks for a shot and is told at once that it has started; the Nano walks the table on a hardware timer, whatever else happens on the serial port; the host polls until the controller says the shot has ended.
 

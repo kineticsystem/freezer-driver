@@ -1,8 +1,8 @@
-# Freezer Driver
+# StepIt Freezer
 
-[![CI](https://github.com/kineticsystem/freezer-driver/actions/workflows/industrial_ci.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/industrial_ci.yml)
-[![Format](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-format.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-format.yml)
-[![Linters](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-ros-lint.yml/badge.svg)](https://github.com/kineticsystem/freezer-driver/actions/workflows/ci-ros-lint.yml)
+[![CI](https://github.com/kineticsystem/stepit-freezer/actions/workflows/industrial_ci.yml/badge.svg)](https://github.com/kineticsystem/stepit-freezer/actions/workflows/industrial_ci.yml)
+[![Format](https://github.com/kineticsystem/stepit-freezer/actions/workflows/ci-format.yml/badge.svg)](https://github.com/kineticsystem/stepit-freezer/actions/workflows/ci-format.yml)
+[![Linters](https://github.com/kineticsystem/stepit-freezer/actions/workflows/ci-ros-lint.yml/badge.svg)](https://github.com/kineticsystem/stepit-freezer/actions/workflows/ci-ros-lint.yml)
 
 <img src="docs/hardware/FreezerPCB.svg" width="50%">
 
@@ -10,11 +10,11 @@
 
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
-- [Install Freezer Driver on the Microcontroller](#install-freezer-driver-on-the-microcontroller)
+- [Install StepIt Freezer on the Microcontroller](#install-stepit-freezer-on-the-microcontroller)
   - [Connect the Arduino Nano](#connect-the-arduino-nano)
   - [Access the Serial Port](#access-the-serial-port)
   - [Flash the Firmware](#flash-the-firmware)
-- [Install Freezer Driver on the Local Computer](#install-freezer-driver-on-the-local-computer)
+- [Install StepIt Freezer on the Local Computer](#install-stepit-freezer-on-the-local-computer)
   - [Check out the Submodules](#check-out-the-submodules)
   - [Pre-Commit Hooks](#pre-commit-hooks)
   - [Build the Project](#build-the-project)
@@ -26,7 +26,7 @@
 
 ## Introduction
 
-Freezer Driver is a project to fire cameras and flashes from ROS2, through the Freezer board: an Arduino Nano driving two 74HC595 shift registers and 16 optocouplers, wired to 8 output jacks and 1 input jack.
+StepIt Freezer is a project to fire cameras and flashes from ROS2, through the Freezer board: an Arduino Nano driving two 74HC595 shift registers and 16 optocouplers, wired to 8 output jacks and 1 input jack.
 
 - Fire up to 7 cameras and a flash at the same time, with the timing of each step kept by a hardware timer of the Nano.
 - Load a sequence of steps once, each an output pattern and a hold time, and fire it with one short command, or with the remote trigger on IN1.
@@ -39,15 +39,15 @@ Freezer Driver is a project to fire cameras and flashes from ROS2, through the F
 
 ## Prerequisites
 
-To run Freezer Driver, we need a computer with Ubuntu 24.04 and ROS2 Jazzy. Please refer to the document [Install ROS2 Jazzy on Ubuntu](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html).
+To run StepIt Freezer, we need a computer with Ubuntu 24.04 and ROS2 Jazzy. Please refer to the document [Install ROS2 Jazzy on Ubuntu](https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html).
 
-Freezer Driver runs with a fake controller by default, so we do not need the board to try it. For a real application, we need the following hardware.
+StepIt Freezer runs with a fake controller by default, so we do not need the board to try it. For a real application, we need the following hardware.
 
 - 1 x Freezer board, see its circuit, PCB and Gerber files in [docs/hardware](docs/hardware/README.md).
 - 1 x [Arduino Nano 3.0](https://docs.arduino.cc/hardware/nano/), with the FTDI FT232R USB chip.
 - 1 x USB cable, mini-B, that carries data, not only power.
 
-## Install Freezer Driver on the Microcontroller
+## Install StepIt Freezer on the Microcontroller
 
 This step is only required if you use a real hardware.
 
@@ -110,7 +110,7 @@ pio run --target upload --upload-port /dev/ttyUSB0
 
 The project targets the board `nanoatmega328`, a Nano with the old bootloader, which listens at 57600 baud. A Nano with the newer Optiboot bootloader listens at 115200 baud: the upload then fails with `not in sync`, and the board in [`platformio.ini`](src/freezer_mcu/platformio.ini) must be `nanoatmega328new`.
 
-The Nano resets every time the port is opened, and the firmware answers only once the bootloader has given up waiting for an upload: about 0.65 s on our Nano. Freezer Driver waits for it, see `connect_delay` in [Brainstorming.md](Brainstorming.md).
+The Nano resets every time the port is opened, and the firmware answers only once the bootloader has given up waiting for an upload: about 0.65 s on our Nano. StepIt Freezer waits for it, see `connect_delay` in [Brainstorming.md](Brainstorming.md).
 
 Before the first upload to a Nano, save the firmware it already has, so that it can be written back. The folder `backup` is ignored by git: each machine keeps its own.
 
@@ -127,14 +127,14 @@ avrdude -p atmega328p -c arduino -P /dev/ttyUSB0 -b 57600 -U flash:w:backup/nano
 
 PlatformIO installs `avrdude` in `~/.platformio/packages/tool-avrdude`; call it from there, with `-C ~/.platformio/packages/tool-avrdude/avrdude.conf`, if it is not on the `PATH`.
 
-## Install Freezer Driver on the Local Computer
+## Install StepIt Freezer on the Local Computer
 
 ### Check out the Submodules
 
 The packages `framed_serial` and `serial` are git submodules, in `modules/framed-serial` and `modules/serial`. Clone the repository with its submodules:
 
 ```
-git clone --recurse-submodules git@github.com:kineticsystem/freezer-driver.git
+git clone --recurse-submodules git@github.com:kineticsystem/stepit-freezer.git
 ```
 
 If you missed the switch `--recurse-submodules`, fetch them with the following command:
@@ -159,22 +159,22 @@ pre-commit install
 
 ### Build the Project
 
-The preferred way to build and run Freezer Driver is to use a Docker container. It is defined in [`docker/docker-compose.yml`](docker/docker-compose.yml) and driven by the [`docker/dock.sh`](docker/dock.sh) script. See [docker/README.md](docker/README.md) for more details.
+The preferred way to build and run StepIt Freezer is to use a Docker container. It is defined in [`docker/docker-compose.yml`](docker/docker-compose.yml) and driven by the [`docker/dock.sh`](docker/dock.sh) script. See [docker/README.md](docker/README.md) for more details.
 
 > [!IMPORTANT]
 > The docker container provides a default user `developer` with password `developer`. That user may run `sudo` without being asked for it, so that the scripts in `bin` also work from a non-interactive shell, e.g.
-> `docker exec freezer-driver update.sh`.
+> `docker exec stepit-freezer update.sh`.
 
 Build the image and create the container. The script always mounts the repo it belongs to, so it can be called from anywhere:
 
 ```
-./docker/dock.sh freezer-driver build
+./docker/dock.sh stepit-freezer build
 ```
 
 Start the container with an interactive shell:
 
 ```
-./docker/dock.sh freezer-driver start
+./docker/dock.sh stepit-freezer start
 ```
 
 The container is privileged and mounts `/dev`, so the Nano on `/dev/ttyUSB0` is reachable from inside it. The commands below assume you are inside the container.
@@ -211,14 +211,14 @@ The packages are the following.
 
 ## Running the Application
 
-By default, the node runs with a fake controller, so we do not need the board. Run the following commands to start Freezer Driver:
+By default, the node runs with a fake controller, so we do not need the board. Run the following commands to start StepIt Freezer:
 
 ```
 source ~/ws/install/setup.bash
 ros2 launch freezer_node freezer.launch.py
 ```
 
-Open a different terminal, attach to the same container with `./docker/dock.sh freezer-driver start`, and fire the default sequence:
+Open a different terminal, attach to the same container with `./docker/dock.sh stepit-freezer start`, and fire the default sequence:
 
 ```
 ros2 action send_goal --feedback /freezer/shoot freezer_msgs/action/Shoot "{}"

@@ -14,9 +14,9 @@ services:
         # writable and correctly owned on the host.
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
-    image: ${CONTAINER_NAME:-freezer-driver}:latest
-    container_name: ${CONTAINER_NAME:-freezer-driver}
-    hostname: ${CONTAINER_NAME:-freezer-driver}
+    image: ${CONTAINER_NAME:-stepit-freezer}:latest
+    container_name: ${CONTAINER_NAME:-stepit-freezer}
+    hostname: ${CONTAINER_NAME:-stepit-freezer}
     privileged: true
     # Required for DDS discovery between this container and the other ROS2 containers.
     network_mode: host
