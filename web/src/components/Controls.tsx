@@ -18,6 +18,9 @@ export function sequenceLabel(index: number): string {
 export function Controls({ freezer, connected, running }: Props) {
   const [names, setNames] = useState<string[]>([]);
   const [sequence, setSequence] = useState('');
+  // Whether the node runs a fake controller: IN1 of the board can only be
+  // pressed by hand.
+  const [fake, setFake] = useState(false);
   // Why the last command failed; a command that succeeds says nothing, its
   // effect shows on the lines.
   const [error, setError] = useState<string>();
@@ -34,6 +37,10 @@ export function Controls({ freezer, connected, running }: Props) {
         setSequence((selected) => (found.includes(selected) ? selected : (found[0] ?? '')));
       })
       .catch(() => current && setNames([]));
+    freezer
+      .usesFake()
+      .then((found) => current && setFake(found))
+      .catch(() => current && setFake(false));
     return () => {
       current = false;
     };
@@ -99,8 +106,12 @@ export function Controls({ freezer, connected, running }: Props) {
           All off
         </button>
         <button
-          disabled={!connected}
-          title="Press the remote trigger of a fake controller: it fires the sequence loaded last"
+          disabled={!connected || !fake}
+          title={
+            fake
+              ? 'Press the remote trigger of the fake controller: it fires the sequence loaded last'
+              : 'Only the fake controller can be pressed from here: on the board, close the IN1 jack'
+          }
           onClick={() => report(() => freezer.pressTrigger())}
         >
           Press IN1

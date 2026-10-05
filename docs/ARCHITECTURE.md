@@ -723,7 +723,7 @@ flowchart LR
 | File | Role |
 |---|---|
 | `src/ros/rosbridge.ts` | The connection: topics, service calls and action goals over the rosbridge protocol. It reconnects by itself, and subscribes again after a reconnection. |
-| `src/freezer/freezer.ts` | The node as the page sees it: a store of the outputs, from `~/outputs`, and of the last shots, from `~/shots`, and one method per command. React reads it with `useSyncExternalStore`. |
+| `src/freezer/freezer.ts` | The node as the page sees it: a store of the outputs, from `~/outputs`, and of the last shots, from `~/shots`, and one method per command. It reads the parameter `use_fake` to tell whether `~/fake/press_trigger` exists, since the page has no rosapi to list the services. React reads it with `useSyncExternalStore`. |
 | `src/freezer/board.ts` | The 16 lines and their bits, the rows of the timing diagram. |
 | `src/freezer/timeline.ts` | When each line is on during a shot, from its table: the spans, the step at a time, the ticks of the axis. |
 | `src/components` | The commands, and the timing diagram: a row per line, with its LED lit as `~/outputs` tells it, and the trace of the latest shot. |

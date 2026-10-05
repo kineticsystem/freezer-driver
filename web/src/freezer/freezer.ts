@@ -187,6 +187,16 @@ export class Freezer {
     return this.ros.callService(`${NODE}/fake/press_trigger`, 'std_srvs/srv/Trigger', {});
   }
 
+  /** Whether the node runs a fake controller, the only one whose IN1 the page can press. */
+  async usesFake(): Promise<boolean> {
+    const response = await this.ros.callService<{ names: string[] }, { values: { bool_value?: boolean }[] }>(
+      `${NODE}/get_parameters`,
+      'rcl_interfaces/srv/GetParameters',
+      { names: ['use_fake'] },
+    );
+    return response.values[0]?.bool_value ?? false;
+  }
+
   /** The names of the sequences of the node's parameters, the default one first. */
   async sequenceNames(): Promise<string[]> {
     const response = await this.ros.callService<
