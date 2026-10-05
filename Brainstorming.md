@@ -1,4 +1,4 @@
-# Freezer Driver Brainstorming
+# StepIt Freezer Brainstorming
 
 ## Table of Contents <!-- omit in toc -->
 
@@ -49,7 +49,7 @@
 
 ## Introduction
 
-Freezer Driver lets ROS2 fire the Freezer board: up to 7 cameras and a flash, through the optocouplers driven by two 74HC595 shift registers on an Arduino Nano. It talks to the board with framed, CRC-checked request and response messages over the USB serial port.
+StepIt Freezer lets ROS2 fire the Freezer board: up to 7 cameras and a flash, through the optocouplers driven by two 74HC595 shift registers on an Arduino Nano. It talks to the board with framed, CRC-checked request and response messages over the USB serial port.
 
 This document collects ideas, and the decisions taken so far are listed in [Decisions](#decisions). The ROS2 packages and the firmware in `src` implement them, and fire shots on a Nano. See the [README](README.md) to build and run them. It follows one rule that everything else must respect: **once a shot starts, its timing belongs to the controller and nothing interrupts it**. The host asks for a shot and is told straight away that it has started, then polls until the controller says it has ended.
 
@@ -829,7 +829,7 @@ The packages:
 
 ## Testing Without the Board
 
-Freezer Driver must run without the board, so that the node, the action and the recipes can be developed and tested on any computer.
+StepIt Freezer must run without the board, so that the node, the action and the recipes can be developed and tested on any computer.
 
 ### The Fake Driver
 
