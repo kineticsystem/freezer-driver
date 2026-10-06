@@ -2,8 +2,6 @@
 
 The drawings and the manufacturing files of the Freezer board, the circuit that StepIt Freezer controls: an Arduino Nano 3.0 driving two 74HC595 shift registers, whose 16 outputs drive 16 optocouplers, four LTV847, wired to 8 output jacks and 1 input jack.
 
-These are the files of the board as it was made, in July 2011. A later edit of the design, of August 2011, moved the parts of the PCB around without changing the circuit, and was never finished nor made; it is not kept here.
-
 Fritzing 1.0 opens the design, made with Fritzing 0.5, and warns that some of its parts are obsolete; they still show and connect as they did.
 
 ## Files
