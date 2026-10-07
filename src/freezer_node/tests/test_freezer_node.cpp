@@ -84,6 +84,7 @@ protected:
         { "poll_period", 0.001 },
         { "end_margin", 0.05 },
         { "watch_period", 0.005 },
+        { "reconnect_period", 0.01 },
     });
     node = std::make_shared<FreezerNode>(options, std::move(driver));
     client_node = std::make_shared<rclcpp::Node>("client");
@@ -221,6 +222,33 @@ protected:
       std::this_thread::sleep_for(1ms);
     }
     return false;
+  }
+
+  /** Wait until the condition holds, for up to 5 s. */
+  template <typename Condition>
+  static bool wait_until(Condition condition)
+  {
+    for (int i = 0; i < 5'000; ++i)
+    {
+      if (condition())
+      {
+        return true;
+      }
+      std::this_thread::sleep_for(1ms);
+    }
+    return false;
+  }
+
+  /** A second node, unplugged at start, named apart from the fixture's. */
+  static std::shared_ptr<FreezerNode> unplugged_node(FakeDriver*& fake_driver, double reconnect_period)
+  {
+    auto driver = std::make_unique<FakeDriver>();
+    fake_driver = driver.get();
+    fake_driver->set_plugged(false);
+    rclcpp::NodeOptions options;
+    options.arguments({ "--ros-args", "-r", "__node:=freezer_unplugged" });
+    options.parameter_overrides({ { "watch_period", 0.005 }, { "reconnect_period", reconnect_period } });
+    return std::make_shared<FreezerNode>(options, std::move(driver));
   }
 
   static Shoot::Goal raw_goal(std::vector<std::pair<uint16_t, uint32_t>> steps)
@@ -461,6 +489,50 @@ TEST_F(TestFreezerNode, shots_of_the_trigger)
   EXPECT_EQ(shots[2].steps[0].outputs, 0x0003);
   EXPECT_EQ(shots[3].event, ShotMsg::ENDED);
   EXPECT_EQ(shots[3].shot_id, node_shot + 1);
+}
+
+/** A controller missing when the node starts is connected once it is plugged in. */
+TEST_F(TestFreezerNode, connect_a_controller_plugged_in_later)
+{
+  FakeDriver* late = nullptr;
+  const auto unplugged = unplugged_node(late, 0.01);
+  EXPECT_FALSE(unplugged->connected());
+
+  late->set_plugged(true);
+  EXPECT_TRUE(wait_until([&] { return unplugged->connected(); }));
+}
+
+/** With reconnect_period 0, a controller missing at start stays missing, as before. */
+TEST_F(TestFreezerNode, no_reconnection_when_turned_off)
+{
+  FakeDriver* late = nullptr;
+  const auto unplugged = unplugged_node(late, 0.0);
+  late->set_plugged(true);
+  std::this_thread::sleep_for(100ms);
+  EXPECT_FALSE(unplugged->connected());
+}
+
+/**
+ * A controller unplugged is let go: shots and services are refused. Plugged in
+ * again, it is connected again, with every output off, and shoots.
+ */
+TEST_F(TestFreezerNode, reconnect_a_controller_unplugged_and_plugged_in_again)
+{
+  ASSERT_TRUE(node->connected());
+  ASSERT_TRUE(set_outputs(0x0003).success);
+
+  fake->set_plugged(false);
+  ASSERT_TRUE(wait_until([this] { return !node->connected(); }));
+  EXPECT_EQ(set_outputs(0x0003).message, "No Freezer controller.");
+  EXPECT_FALSE(send(Shoot::Goal{})) << "a shot is rejected while the controller is away";
+
+  fake->set_plugged(true);
+  ASSERT_TRUE(wait_until([this] { return node->connected(); }));
+  EXPECT_TRUE(wait_outputs(0)) << "the Nano resets when its port opens";
+
+  auto handle = send(Shoot::Goal{});
+  ASSERT_TRUE(handle);
+  EXPECT_EQ(result(handle).code, ResultCode::SUCCEEDED);
 }
 
 }  // namespace freezer_node::test

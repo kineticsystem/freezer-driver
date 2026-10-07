@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -98,6 +99,13 @@ public:
 
   void set_failure(Failure failure);
 
+  /**
+   * Unplug the controller, or plug it in again. Unplugged, connect() and every
+   * query throw, as on a serial port whose device is gone; plugged in again,
+   * it starts afresh, as the Nano does when it powers up.
+   */
+  void set_plugged(bool plugged);
+
   /** The lateness the next shots report, in µs. */
   void set_lateness(uint32_t lateness_us);
 
@@ -116,6 +124,9 @@ public:
 private:
   static std::chrono::microseconds steady_clock();
 
+  /** @throw std::runtime_error when the controller is unplugged. */
+  void check_plugged() const;
+
   /** End the running shot if its time is over. */
   void update();
 
@@ -127,6 +138,8 @@ private:
 
   Clock clock_;
   Failure failure_ = Failure::None;
+  // Set by a test while the node may be calling the fake from another thread.
+  std::atomic<bool> plugged_{ true };
   uint32_t lateness_us_ = 0;
 
   std::optional<Sequence> loaded_;

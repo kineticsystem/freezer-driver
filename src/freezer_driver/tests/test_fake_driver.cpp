@@ -28,6 +28,8 @@
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 #include <freezer_driver/fake/fake_driver.hpp>
 
 namespace freezer_driver::test
@@ -55,6 +57,24 @@ TEST_F(TestFakeDriver, handshake)
   EXPECT_EQ(info.name, "FREEZER");
   EXPECT_EQ(info.version.major(), 2);
   EXPECT_EQ(info.limits.max_steps, 16);
+}
+
+/** Unplugged, it answers nothing; plugged in again, it starts afresh. */
+TEST_F(TestFakeDriver, unplugged_and_plugged_in_again)
+{
+  ASSERT_TRUE(driver.load_sequence(sequence).success());
+  ASSERT_TRUE(driver.shoot().success());
+
+  driver.set_plugged(false);
+  EXPECT_THROW(driver.connect(), std::runtime_error);
+  EXPECT_THROW(driver.get_status(), std::runtime_error);
+  EXPECT_THROW(driver.set_outputs(0x0001), std::runtime_error);
+
+  driver.set_plugged(true);
+  EXPECT_TRUE(driver.connect());
+  const StatusResponse status = driver.get_status();
+  EXPECT_EQ(status.last_shot_id, 0) << "the shot ids start again";
+  EXPECT_FALSE(driver.shoot().success()) << "the sequence is forgotten";
 }
 
 TEST_F(TestFakeDriver, load_returns_duration)
