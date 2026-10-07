@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -51,6 +52,9 @@ using freezer_driver::Step;
 namespace
 {
 constexpr auto kFlashRecipe = "flash";
+// The status queries that fail in a row before the controller is let go: one
+// may fail on noise, a controller unplugged fails them all.
+constexpr int kMaxFailedPolls = 3;
 constexpr auto kTimedLightRecipe = "timed_light";
 
 std::string prefix(const std::string& name)
@@ -92,6 +96,7 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
   declare_parameter<int>("baudrate", 9600);
   declare_parameter<double>("timeout", 0.2);
   declare_parameter<double>("connect_delay", 1.0);
+  declare_parameter<double>("reconnect_period", 2.0);
   declare_parameter<double>("poll_period", 0.01);
   declare_parameter<double>("end_margin", 0.1);
   declare_parameter<double>("watch_period", 0.2);
@@ -160,10 +165,25 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
     watch_timer_ = create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(seconds(watch_period)),
                                      [this] { watch(); });
   }
+
+  const double reconnect_period = get_parameter("reconnect_period").as_double();
+  if (reconnect_period > 0.0)
+  {
+    reconnector_ = std::thread{ [this, reconnect_period] { reconnect_loop(seconds(reconnect_period)); } };
+  }
 }
 
 FreezerNode::~FreezerNode()
 {
+  {
+    std::lock_guard lock{ reconnect_mutex_ };
+    closing_ = true;
+  }
+  reconnect_condition_.notify_all();
+  if (reconnector_.joinable())
+  {
+    reconnector_.join();
+  }
   if (worker_.joinable())
   {
     worker_.join();
@@ -234,30 +254,104 @@ std::unique_ptr<freezer_driver::Driver> FreezerNode::create_driver()
                                                          seconds(get_parameter("connect_delay").as_double()));
 }
 
-void FreezerNode::connect()
+bool FreezerNode::connect()
 {
+  std::string error;
   try
   {
-    if (!driver_->connect())
+    if (driver_->connect())
     {
-      RCLCPP_ERROR(get_logger(), "No Freezer controller: every shot will be rejected.");
-      return;
+      const auto info = driver_->get_info();
+      if (info.success())
+      {
+        {
+          std::lock_guard lock{ limits_mutex_ };
+          limits_ = info.limits;
+        }
+        failure_reported_ = false;
+        connected_ = true;
+        RCLCPP_INFO(get_logger(), "Sequences of up to %d steps, holds of at least %u us, up to %u us in total.",
+                    info.limits.max_steps, info.limits.min_hold_us, info.limits.max_duration_us);
+        return true;
+      }
+      error = "The Freezer controller did not report its limits.";
     }
-    const auto info = driver_->get_info();
-    if (!info.success())
+    else
     {
-      RCLCPP_ERROR(get_logger(), "The Freezer controller did not report its limits.");
-      return;
+      error = "No Freezer controller.";
     }
-    limits_ = info.limits;
-    connected_ = true;
-    RCLCPP_INFO(get_logger(), "Sequences of up to %d steps, holds of at least %u us, up to %u us in total.",
-                limits_.max_steps, limits_.min_hold_us, limits_.max_duration_us);
   }
   catch (const std::exception& ex)
   {
-    RCLCPP_ERROR(get_logger(), "Cannot connect to the Freezer controller: %s", ex.what());
+    error = std::string{ "Cannot connect to the Freezer controller: " } + ex.what();
   }
+  // The port may be open, e.g. on a device that is not a Freezer: the next try opens it again.
+  try
+  {
+    driver_->disconnect();
+  }
+  catch (const std::exception&)
+  {
+  }
+  // The first failure is told, not every try that follows.
+  if (failure_reported_)
+  {
+    RCLCPP_DEBUG(get_logger(), "%s", error.c_str());
+  }
+  else
+  {
+    failure_reported_ = true;
+    const double period = get_parameter("reconnect_period").as_double();
+    if (period > 0.0)
+    {
+      RCLCPP_ERROR(get_logger(), "%s Every shot is rejected until it answers: trying again every %.1f s.",
+                   error.c_str(), period);
+    }
+    else
+    {
+      RCLCPP_ERROR(get_logger(), "%s Every shot will be rejected.", error.c_str());
+    }
+  }
+  return false;
+}
+
+void FreezerNode::disconnect()
+{
+  connected_ = false;
+  try
+  {
+    driver_->disconnect();
+  }
+  catch (const std::exception& ex)
+  {
+    RCLCPP_DEBUG(get_logger(), "Closing the port: %s", ex.what());
+  }
+}
+
+void FreezerNode::reconnect_loop(std::chrono::duration<double> period)
+{
+  std::unique_lock lock{ reconnect_mutex_ };
+  while (!reconnect_condition_.wait_for(lock, period, [this] { return closing_; }))
+  {
+    if (connected_)
+    {
+      continue;
+    }
+    lock.unlock();
+    if (connect())
+    {
+      RCLCPP_INFO(get_logger(), "The Freezer controller is back.");
+      // The Nano resets when the port opens: every output is off.
+      publish_outputs(0);
+    }
+    lock.lock();
+  }
+}
+
+freezer_driver::SequenceLimits FreezerNode::limits() const
+{
+  std::lock_guard lock{ limits_mutex_ };
+  return limits_;
 }
 
 Sequence FreezerNode::build_sequence(const Shoot::Goal& goal)
@@ -317,7 +411,7 @@ rclcpp_action::GoalResponse FreezerNode::handle_goal(const rclcpp_action::GoalUU
   try
   {
     // The limits are known since the handshake: no serial traffic here.
-    if (const auto error = freezer_driver::validate(build_sequence(*goal), limits_))
+    if (const auto error = freezer_driver::validate(build_sequence(*goal), limits()))
     {
       throw std::invalid_argument(*error);
     }
@@ -622,9 +716,17 @@ void FreezerNode::watch()
   }
   catch (const std::exception& ex)
   {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10'000, "Cannot read the controller's status: %s", ex.what());
+    if (++failed_polls_ >= kMaxFailedPolls)
+    {
+      // Unplugged, most likely: the port is closed, and opened again when the controller is back.
+      RCLCPP_WARN(get_logger(),
+                  "The Freezer controller stopped answering (%s): every shot is rejected until it is back.", ex.what());
+      failed_polls_ = 0;
+      disconnect();
+    }
     return;
   }
+  failed_polls_ = 0;
   if (!status.success())
   {
     return;

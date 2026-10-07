@@ -206,7 +206,7 @@ The path of a serial port does not tell what is plugged in, so `DefaultDriver::c
 
 The driver accepts the controller only when the name is `FREEZER`, not another device on the wrong port, and its major version is the one the driver speaks, 2. The major version changes whenever the bytes on the wire change, so a driver never reads a controller it does not understand: flash the firmware of the same workspace. The node keeps the limits, and checks every table against them before sending it.
 
-**The Nano resets when the port opens.** The DTR line of its FT232 resets it, and its bootloader listens for an upload for about 0.65 s before the firmware starts, losing any frame sent meanwhile. The driver waits `connect_delay`, 1 s, after opening the port, then tries `Info` up to 5 times, 100 ms apart. The node keeps the port open for its whole life, because every reopen restarts the controller, which forgets its table and switches its outputs off.
+**The Nano resets when the port opens.** The DTR line of its FT232 resets it, and its bootloader listens for an upload for about 0.65 s before the firmware starts, losing any frame sent meanwhile. The driver waits `connect_delay`, 1 s, after opening the port, then tries `Info` up to 5 times, 100 ms apart. The node keeps the port open as long as the controller answers, because every reopen restarts the controller, which forgets its table and switches its outputs off.
 
 ## The Controller
 
@@ -494,7 +494,7 @@ The real controller, over a `FramedSerial`. It encodes the requests, decodes the
 
 ### FakeDriver
 
-A controller in software, to run the node and test it without the board. It applies the rules of the firmware, runs a shot on a clock it is given, and records every pattern it latches, and when, in a timeline. Tests drive the clock by hand, so a shot of a second takes no time, and can make it fail in the ways that are hard to provoke on the board: a shot that never ends, a reset during a shot. `trigger()` presses IN1.
+A controller in software, to run the node and test it without the board. It applies the rules of the firmware, runs a shot on a clock it is given, and records every pattern it latches, and when, in a timeline. Tests drive the clock by hand, so a shot of a second takes no time, and can make it fail in the ways that are hard to provoke on the board: a shot that never ends, a reset during a shot. `trigger()` presses IN1, and `set_plugged(false)` unplugs it: every call then throws, as on a port whose device is gone, until `set_plugged(true)` plugs it in again, afresh.
 
 ### SynchronizedDriver
 
@@ -527,6 +527,8 @@ A raw table can still be sent, in the goal, for experiments.
 The node checks a goal, then runs it on a thread of its own with a `ShotRunner`, turning the runner's callbacks into feedback, `LOADING` then `RUNNING` with the step and the elapsed time, and its result into the result of the goal. One goal runs at a time: a goal is rejected while another runs, when no controller is connected, or when its table breaks a rule of the limits, with no serial traffic. A goal can be canceled while its table loads, never once the shot has started.
 
 While no goal runs, a timer queries the controller's status every `watch_period`, to see the shots of the remote trigger, and the node tells every shot and every change of the outputs on its topics, see [Seeing the Board](#seeing-the-board).
+
+The controller can come and go, see [Losing the Controller](#losing-the-controller): while there is none, a thread of the node tries to connect every `reconnect_period`, and the node refuses every goal and every service meanwhile.
 
 ## A Shot from the Host
 
@@ -631,6 +633,8 @@ The Nano resets when its power or its USB connection drops, and when the port is
 - **A shot disappears.** The controller reads idle with another shot id than the one `Shoot` returned: the runner aborts the goal, saying the controller may have reset, and forgets its table, so the next shot loads it again.
 
 A controller that never answers makes every call throw after `timeout`, and a shot that never ends aborts at its deadline.
+
+**A controller unplugged is let go, and connected again when it is back.** While no goal runs, three status queries of `watch()` that fail in a row, 0.6 s, close the port: a Nano unplugged makes them all fail, a single failure on noise does not. A shot running when it goes fails as above, and the next queries close the port. Then, as when the Nano is missing at start, a thread of the node tries to connect every `reconnect_period`, 2 s: opening the port fails at once while the Nano is away, and the handshake succeeds once it is back. The Nano resets when its port opens, so the node tells every output off, and `watch()` sees its shot ids start again. The first failure goes to the log, not every try that follows. The thread connects apart from the executor, because a handshake takes more than a second, `connect_delay` and the tries of `Info`, and the services must answer meanwhile. On a Raspberry Pi, where the Nano is sometimes not seen at boot, it is enough to plug it in again: nothing needs a restart. `reconnect_period` 0 tries once, at start, and never lets the controller go.
 
 ## Seeing the Board
 
@@ -753,11 +757,11 @@ The tests run without the board: `DefaultDriver` against a mock of `FramedSerial
 | Test | What it covers |
 |---|---|
 | `test_default_driver` | The frames each command sends and how each response is read, the handshake, its retries and its refusals, the errors. |
-| `test_fake_driver` | The fake runs a table, records its timeline, owns the outputs during a shot, stops, fires from IN1, and fails when told to. |
+| `test_fake_driver` | The fake runs a table, records its timeline, owns the outputs during a shot, stops, fires from IN1, fails when told to, and answers nothing while unplugged. |
 | `test_sequence` | The encoding of a table and the rules of the controller. |
 | `test_recipes` | Each recipe produces the expected table, and the jack to bit mapping. |
 | `test_shot_runner` | A shot from load to end on a clock the test moves: the callbacks, a table loaded once, a cancel, a refused table, a shot that never ends, a reset during and between shots. |
-| `test_freezer_node` | The ROS2 interface end to end: the action, its rejections, the services, a stop during a shot, a goal during a shot of IN1, the topics, and the shots of the trigger the node sees while idle. |
+| `test_freezer_node` | The ROS2 interface end to end: the action, its rejections, the services, a stop during a shot, a goal during a shot of IN1, the topics, the shots of the trigger the node sees while idle, and a controller missing at start or unplugged, connected again once it is back. |
 
 The board page has tests of its own, with vitest, run by `bin/test.sh` and by the `Web` workflow of CI: the bits of the board, the timeline of a shot, how the shot messages make the list of shots, and the rosbridge client against a fake WebSocket.
 

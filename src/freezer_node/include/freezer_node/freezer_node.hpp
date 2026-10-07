@@ -29,6 +29,8 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -69,6 +71,12 @@ namespace freezer_node
  * While no goal runs, the node polls the controller every watch_period, to see
  * the shots of the remote trigger, IN1. With a fake controller, the service
  * fake/press_trigger presses IN1.
+ *
+ * The controller can come and go: a Nano missing when the node starts, or
+ * unplugged later, is connected again once it is back. Every reconnect_period,
+ * a thread of its own tries to connect while there is no controller; watch()
+ * lets the controller go when it stops answering. Meanwhile, every shot and
+ * every service is refused, as with no controller at all.
  */
 class FreezerNode : public rclcpp::Node
 {
@@ -93,13 +101,24 @@ public:
 
   ~FreezerNode() override;
 
-  /** True when the handshake with the controller succeeded. */
+  /** True when the handshake with the controller succeeded, and it still answers. */
   bool connected() const;
 
 private:
   void declare_sequence_parameters();
   std::unique_ptr<freezer_driver::Driver> create_driver();
-  void connect();
+
+  /** Connect to the controller, and read its limits: true when it answered. */
+  bool connect();
+
+  /** Close the port, and refuse every shot until connect() succeeds again. */
+  void disconnect();
+
+  /** Try connect() every reconnect_period while there is no controller, until the node ends. */
+  void reconnect_loop(std::chrono::duration<double> period);
+
+  /** The limits of the controller, read when it connected. */
+  freezer_driver::SequenceLimits limits() const;
 
   /**
    * Build the table of a goal, from its raw steps or from the sequence it
@@ -132,8 +151,20 @@ private:
   // The same driver as driver_, as the SynchronizedDriver it is.
   freezer_driver::SynchronizedDriver* synchronized_ = nullptr;
   std::unique_ptr<freezer_driver::ShotRunner> runner_;
+  // Written by the thread that connects, read by the services and the shot's thread.
+  mutable std::mutex limits_mutex_;
   freezer_driver::SequenceLimits limits_;
-  bool connected_ = false;
+  std::atomic<bool> connected_{ false };
+  // A failed connection was logged: the next ones go to the debug log only.
+  bool failure_reported_ = false;
+  // The status queries of watch() that failed in a row.
+  int failed_polls_ = 0;
+
+  // Connects again while there is no controller; ends with the node.
+  std::thread reconnector_;
+  std::mutex reconnect_mutex_;
+  std::condition_variable reconnect_condition_;
+  bool closing_ = false;
 
   std::atomic<bool> busy_{ false };
 

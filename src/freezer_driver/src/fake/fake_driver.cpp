@@ -26,6 +26,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include <stdexcept>
+
 #include <freezer_driver/fake/fake_driver.hpp>
 
 namespace freezer_driver
@@ -41,6 +43,7 @@ std::chrono::microseconds FakeDriver::steady_clock()
 
 bool FakeDriver::connect()
 {
+  check_plugged();
   return true;
 }
 
@@ -50,6 +53,7 @@ void FakeDriver::disconnect()
 
 InfoResponse FakeDriver::get_info()
 {
+  check_plugged();
   InfoResponse response{ Response::Status::Success };
   response.version = Version{ 2, 0, 0 };
   response.limits = kLimits;
@@ -59,6 +63,7 @@ InfoResponse FakeDriver::get_info()
 
 LoadSequenceResponse FakeDriver::load_sequence(const Sequence& sequence)
 {
+  check_plugged();
   ++loads_;
   update();
   if (running_)
@@ -77,6 +82,7 @@ LoadSequenceResponse FakeDriver::load_sequence(const Sequence& sequence)
 
 ShootResponse FakeDriver::shoot()
 {
+  check_plugged();
   update();
   if (running_)
   {
@@ -96,6 +102,7 @@ ShootResponse FakeDriver::shoot()
 
 Response FakeDriver::set_outputs(uint16_t outputs)
 {
+  check_plugged();
   update();
   if (running_)
   {
@@ -107,6 +114,7 @@ Response FakeDriver::set_outputs(uint16_t outputs)
 
 Response FakeDriver::stop()
 {
+  check_plugged();
   update();
   running_ = false;
   latch_now(0);
@@ -141,6 +149,7 @@ uint16_t FakeDriver::outputs() const
 
 StatusResponse FakeDriver::get_status()
 {
+  check_plugged();
   if (running_ && failure_ == Failure::ResetDuringShot)
   {
     reset();
@@ -172,6 +181,23 @@ StatusResponse FakeDriver::get_status()
 void FakeDriver::set_failure(Failure failure)
 {
   failure_ = failure;
+}
+
+void FakeDriver::set_plugged(bool plugged)
+{
+  if (plugged && !plugged_)
+  {
+    reset();
+  }
+  plugged_ = plugged;
+}
+
+void FakeDriver::check_plugged() const
+{
+  if (!plugged_)
+  {
+    throw std::runtime_error("No controller on the serial port.");
+  }
 }
 
 void FakeDriver::set_lateness(uint32_t lateness_us)
