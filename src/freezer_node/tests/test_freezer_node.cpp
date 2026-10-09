@@ -34,6 +34,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -51,6 +52,7 @@ using SetOutputs = freezer_msgs::srv::SetOutputs;
 using Trigger = std_srvs::srv::Trigger;
 using OutputsMsg = freezer_msgs::msg::Outputs;
 using ShotMsg = freezer_msgs::msg::Shot;
+using StatusMsg = freezer_msgs::msg::ControllerStatus;
 using ResultCode = rclcpp_action::ResultCode;
 using namespace std::chrono_literals;
 
@@ -533,6 +535,103 @@ TEST_F(TestFreezerNode, reconnect_a_controller_unplugged_and_plugged_in_again)
   auto handle = send(Shoot::Goal{});
   ASSERT_TRUE(handle);
   EXPECT_EQ(result(handle).code, ResultCode::SUCCEEDED);
+}
+
+/**
+ * status tells a page that opens late whether the controller is connected:
+ * it is latched, and published again every second.
+ */
+TEST_F(TestFreezerNode, status_topic)
+{
+  auto listener = std::make_shared<rclcpp::Node>("status_listener");
+  std::vector<StatusMsg> statuses;
+  auto subscription = listener->create_subscription<StatusMsg>(
+      "/freezer/status", rclcpp::QoS{ 1 }.reliable().transient_local(), [&](const StatusMsg& message) {
+        std::lock_guard lock{ mutex };
+        statuses.push_back(message);
+      });
+  executor.add_node(listener);
+
+  ASSERT_TRUE(wait_until([&] {
+    std::lock_guard lock{ mutex };
+    return !statuses.empty();
+  }));
+  {
+    std::lock_guard lock{ mutex };
+    EXPECT_TRUE(statuses[0].connected);
+    EXPECT_EQ(statuses[0].device, "fake");
+    EXPECT_EQ(statuses[0].message, "");
+  }
+  std::this_thread::sleep_for(2500ms);
+  {
+    std::lock_guard lock{ mutex };
+    EXPECT_GE(statuses.size(), 3u) << "the latched one, then one a second";
+  }
+  executor.remove_node(listener);
+}
+
+/**
+ * status follows the controller unplugged and plugged in again, saying why it
+ * is away. The node first tells that the controller stopped answering; the
+ * tries to connect again that follow may replace the reason with their own
+ * error, so every status is kept, not only the last.
+ */
+TEST_F(TestFreezerNode, status_follows_the_controller)
+{
+  auto listener = std::make_shared<rclcpp::Node>("status_listener");
+  std::vector<StatusMsg> received;
+  auto subscription = listener->create_subscription<StatusMsg>(
+      "/freezer/status", rclcpp::QoS{ 100 }.reliable().transient_local(), [&](const StatusMsg& message) {
+        std::lock_guard lock{ mutex };
+        received.push_back(message);
+      });
+  executor.add_node(listener);
+  auto last_status = [&] {
+    std::lock_guard lock{ mutex };
+    return received.empty() ? std::nullopt : std::optional<StatusMsg>{ received.back() };
+  };
+
+  ASSERT_TRUE(wait_until([&] { return last_status() && last_status()->connected; }));
+
+  fake->set_plugged(false);
+  ASSERT_TRUE(wait_until([&] { return last_status() && !last_status()->connected; }));
+  {
+    std::lock_guard lock{ mutex };
+    EXPECT_TRUE(std::any_of(received.begin(), received.end(), [](const StatusMsg& status) {
+      return !status.connected && status.message.rfind("The Freezer controller stopped answering: ", 0) == 0;
+    })) << "the unplug is told with its reason";
+  }
+  EXPECT_FALSE(last_status()->message.empty());
+
+  fake->set_plugged(true);
+  ASSERT_TRUE(wait_until([&] { return last_status() && last_status()->connected; }));
+  EXPECT_EQ(last_status()->message, "");
+  executor.remove_node(listener);
+}
+
+/** A controller missing at start is told on status, with the reason. */
+TEST_F(TestFreezerNode, status_of_a_controller_missing_at_start)
+{
+  FakeDriver* late = nullptr;
+  const auto unplugged = unplugged_node(late, 0.0);
+  auto listener = std::make_shared<rclcpp::Node>("status_listener");
+  std::optional<StatusMsg> last;
+  auto subscription = listener->create_subscription<StatusMsg>(
+      "/freezer_unplugged/status", rclcpp::QoS{ 1 }.reliable().transient_local(), [&](const StatusMsg& message) {
+        std::lock_guard lock{ mutex };
+        last = message;
+      });
+  executor.add_node(listener);
+
+  ASSERT_TRUE(wait_until([&] {
+    std::lock_guard lock{ mutex };
+    return last.has_value();
+  }));
+  std::lock_guard lock{ mutex };
+  EXPECT_FALSE(last->connected);
+  EXPECT_FALSE(last->message.empty());
+  EXPECT_NE(last->message, "Not connected yet.") << "the reason of the failed connection";
+  executor.remove_node(listener);
 }
 
 }  // namespace freezer_node::test

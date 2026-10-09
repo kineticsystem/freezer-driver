@@ -115,6 +115,11 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
 
   outputs_publisher_ = create_publisher<OutputsMsg>("~/outputs", latched());
   shots_publisher_ = create_publisher<ShotMsg>("~/shots", latched());
+  status_publisher_ = create_publisher<StatusMsg>("~/status", latched());
+  device_ = dynamic_cast<const freezer_driver::FakeDriver*>(&synchronized_->driver()) ?
+                "fake" :
+                get_parameter("usb_port").as_string();
+  set_status(false, "Not connected yet.");
 
   connect();
   // The Nano resets when the port opens: every output is off.
@@ -165,6 +170,9 @@ FreezerNode::FreezerNode(const rclcpp::NodeOptions& options, std::unique_ptr<fre
     watch_timer_ = create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(seconds(watch_period)),
                                      [this] { watch(); });
   }
+
+  // Every second, so that a page knows the node is alive.
+  status_timer_ = create_wall_timer(std::chrono::seconds(1), [this] { publish_status(); });
 
   const double reconnect_period = get_parameter("reconnect_period").as_double();
   if (reconnect_period > 0.0)
@@ -270,6 +278,7 @@ bool FreezerNode::connect()
         }
         failure_reported_ = false;
         connected_ = true;
+        set_status(true, "");
         RCLCPP_INFO(get_logger(), "Sequences of up to %d steps, holds of at least %u us, up to %u us in total.",
                     info.limits.max_steps, info.limits.min_hold_us, info.limits.max_duration_us);
         return true;
@@ -293,6 +302,7 @@ bool FreezerNode::connect()
   catch (const std::exception&)
   {
   }
+  set_status(false, error);
   // The first failure is told, not every try that follows.
   if (failure_reported_)
   {
@@ -315,9 +325,10 @@ bool FreezerNode::connect()
   return false;
 }
 
-void FreezerNode::disconnect()
+void FreezerNode::disconnect(const std::string& message)
 {
   connected_ = false;
+  set_status(false, message);
   try
   {
     driver_->disconnect();
@@ -326,6 +337,33 @@ void FreezerNode::disconnect()
   {
     RCLCPP_DEBUG(get_logger(), "Closing the port: %s", ex.what());
   }
+}
+
+void FreezerNode::set_status(bool connected, const std::string& message)
+{
+  {
+    std::lock_guard lock{ status_mutex_ };
+    if (status_connected_ == connected && status_message_ == message)
+    {
+      return;
+    }
+    status_connected_ = connected;
+    status_message_ = message;
+  }
+  publish_status();
+}
+
+void FreezerNode::publish_status()
+{
+  StatusMsg status;
+  status.stamp = now();
+  status.device = device_;
+  {
+    std::lock_guard lock{ status_mutex_ };
+    status.connected = status_connected_;
+    status.message = status_message_;
+  }
+  status_publisher_->publish(status);
 }
 
 void FreezerNode::reconnect_loop(std::chrono::duration<double> period)
@@ -722,7 +760,7 @@ void FreezerNode::watch()
       RCLCPP_WARN(get_logger(),
                   "The Freezer controller stopped answering (%s): every shot is rejected until it is back.", ex.what());
       failed_polls_ = 0;
-      disconnect();
+      disconnect(std::string{ "The Freezer controller stopped answering: " } + ex.what());
     }
     return;
   }
