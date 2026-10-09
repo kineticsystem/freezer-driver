@@ -131,6 +131,7 @@ The node's interface:
 | `~/stop` | `std_srvs/srv/Trigger` service | End the running shot where it is, if any, and switch every output off. |
 | `~/outputs` | `freezer_msgs/msg/Outputs` topic | The pattern of the outputs, whenever it changes. |
 | `~/shots` | `freezer_msgs/msg/Shot` topic | Each shot when it starts, with its table and its start time, and when it ends, stops or fails. |
+| `~/status` | `freezer_msgs/msg/ControllerStatus` topic | Whether the controller is connected, and why not, when it changes and every second. |
 | `~/fake/press_trigger` | `std_srvs/srv/Trigger` service | With the fake controller only: press IN1. |
 | `use_fake`, `usb_port`, `timeout`, ... | parameters | The connection, the polling and the sequences, see the [README](../README.md#parameters). |
 
@@ -644,6 +645,8 @@ Two topics tell what the board does. Each keeps its last message for a client th
 
 - **`~/outputs`** is the pattern of the outputs whenever the node knows it changed: what `set_outputs` latched, all off after a stop and after a shot, and each step of a shot as the controller reports it when polled. A step shorter than the polling period may therefore never be published: this topic is for showing the board live, not for timing.
 - **`~/shots`** tells each shot when it starts, with its table and the host time at which the controller confirmed its start, and when it ends, with how long it ran and its worst lateness, when it was stopped, or when it failed. The table and the start give the time of every step boundary to the microsecond, since the controller runs the table exactly; the time at which a message reaches a client gives it only to a few milliseconds.
+
+**`~/status`** tells whether the node talks to the controller, with the serial port, or `fake`, and why not, e.g. `No Freezer controller.` or `The Freezer controller stopped answering: ...`. It is published when it changes, and again every second: a client that stops receiving it knows that the node is gone, which a latched message alone cannot tell, since it stays on a page after its node died. StepIt Macro shows it as an icon of its page.
 
 The node only talks to the controller during its own shots, so it would never see one fired by IN1. While no goal runs, it queries the status every `watch_period`, 200 ms by default. A new shot id is a shot of the trigger: it runs the table the node loaded last, and the time the status says it has run gives its start. The node follows it to its end at the same period, and tells it on both topics, as `SOURCE_TRIGGER`. A shot shorter than the period is seen only once it ended, with its start estimated from its duration. A status taken while a goal starts is dropped, so that the goal's own shot is never taken for the trigger's.
 

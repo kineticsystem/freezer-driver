@@ -266,6 +266,12 @@ ros2 topic echo /freezer/outputs
 ros2 topic echo /freezer/shots
 ```
 
+A third topic, `~/status`, tells whether the node talks to the controller, and why not, e.g. `No Freezer controller.`. It keeps its last message too, and comes again every second, so that a client knows the node still runs:
+
+```
+ros2 topic echo /freezer/status --qos-durability transient_local
+```
+
 To use the Freezer board, set the launch argument `use_fake`:
 
 ```
@@ -326,7 +332,7 @@ Each sequence has a `recipe` and the parameters of that recipe, in milliseconds.
 
 **Nothing is printed when the Nano is plugged in, but its power LED is on.** The computer does not see the Nano at all: the USB data lines do not reach it. The cable may carry power only, which is common with mini-B cables, or the USB socket or the FT232 chip of the Nano is broken. A Nano mounted on the Freezer board can also take its power from the board, so its LED proves nothing about the USB side. Try a cable known to carry data, e.g. one used with a camera, plug it into a port of the computer and not a hub, and try the Nano on its own, off the board. If it still shows nothing, replace the Nano.
 
-**Every shot is rejected, and the log says `Every shot is rejected until it answers` or `The Freezer controller stopped answering`.** The Nano is unplugged, or the computer did not see it, as a Raspberry Pi sometimes does at boot. Plug it in again: the node tries to connect every `reconnect_period`, 2 s, and logs `The Freezer controller is back`, with no restart.
+**Every shot is rejected, and the log says `Every shot is rejected until it answers` or `The Freezer controller stopped answering`.** The Nano is unplugged, or the computer did not see it, as a Raspberry Pi sometimes does at boot. Plug it in again: the node tries to connect every `reconnect_period`, 2 s, and logs `The Freezer controller is back`, with no restart. `/freezer/status` tells the error of the last try.
 
 **`Permission denied` when opening `/dev/ttyUSB0`.** Our user is not in the group `dialout`, or we have not logged in again since joining it. See [Access the Serial Port](#access-the-serial-port).
 

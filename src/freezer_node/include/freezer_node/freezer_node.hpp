@@ -35,6 +35,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 
 #include <freezer_driver/driver.hpp>
@@ -42,6 +43,7 @@
 #include <freezer_driver/shot_runner.hpp>
 #include <freezer_driver/synchronized_driver.hpp>
 #include <freezer_msgs/action/shoot.hpp>
+#include <freezer_msgs/msg/controller_status.hpp>
 #include <freezer_msgs/msg/outputs.hpp>
 #include <freezer_msgs/msg/shot.hpp>
 #include <freezer_msgs/srv/set_outputs.hpp>
@@ -77,6 +79,9 @@ namespace freezer_node
  * a thread of its own tries to connect while there is no controller; watch()
  * lets the controller go when it stops answering. Meanwhile, every shot and
  * every service is refused, as with no controller at all.
+ *
+ * status tells whether the controller is connected, and why not: latched,
+ * published when it changes and every second.
  */
 class FreezerNode : public rclcpp::Node
 {
@@ -87,6 +92,7 @@ public:
   using Trigger = std_srvs::srv::Trigger;
   using OutputsMsg = freezer_msgs::msg::Outputs;
   using ShotMsg = freezer_msgs::msg::Shot;
+  using StatusMsg = freezer_msgs::msg::ControllerStatus;
 
   /**
    * @brief Create the node with the driver chosen by the parameter use_fake.
@@ -111,8 +117,12 @@ private:
   /** Connect to the controller, and read its limits: true when it answered. */
   bool connect();
 
-  /** Close the port, and refuse every shot until connect() succeeds again. */
-  void disconnect();
+  /** Close the port, and refuse every shot until connect() succeeds again; message says why. */
+  void disconnect(const std::string& message);
+
+  /** Record whether the controller is connected, and publish it when it changed. */
+  void set_status(bool connected, const std::string& message);
+  void publish_status();
 
   /** Try connect() every reconnect_period while there is no controller, until the node ends. */
   void reconnect_loop(std::chrono::duration<double> period);
@@ -198,5 +208,14 @@ private:
   rclcpp::Publisher<OutputsMsg>::SharedPtr outputs_publisher_;
   rclcpp::Publisher<ShotMsg>::SharedPtr shots_publisher_;
   rclcpp::TimerBase::SharedPtr watch_timer_;
+  rclcpp::Publisher<StatusMsg>::SharedPtr status_publisher_;
+  rclcpp::TimerBase::SharedPtr status_timer_;
+  // The serial port of the controller, or "fake".
+  std::string device_;
+  // The status last set, and why the controller is not connected; written by
+  // the thread that connects and by the executor's.
+  std::mutex status_mutex_;
+  bool status_connected_ = false;
+  std::string status_message_;
 };
 }  // namespace freezer_node
