@@ -570,28 +570,38 @@ TEST_F(TestFreezerNode, status_topic)
   executor.remove_node(listener);
 }
 
-/** status follows the controller unplugged and plugged in again, saying why it is away. */
+/**
+ * status follows the controller unplugged and plugged in again, saying why it
+ * is away. The node first tells that the controller stopped answering; the
+ * tries to connect again that follow may replace the reason with their own
+ * error, so every status is kept, not only the last.
+ */
 TEST_F(TestFreezerNode, status_follows_the_controller)
 {
   auto listener = std::make_shared<rclcpp::Node>("status_listener");
-  std::optional<StatusMsg> last;
+  std::vector<StatusMsg> received;
   auto subscription = listener->create_subscription<StatusMsg>(
-      "/freezer/status", rclcpp::QoS{ 1 }.reliable().transient_local(), [&](const StatusMsg& message) {
+      "/freezer/status", rclcpp::QoS{ 100 }.reliable().transient_local(), [&](const StatusMsg& message) {
         std::lock_guard lock{ mutex };
-        last = message;
+        received.push_back(message);
       });
   executor.add_node(listener);
   auto last_status = [&] {
     std::lock_guard lock{ mutex };
-    return last;
+    return received.empty() ? std::nullopt : std::optional<StatusMsg>{ received.back() };
   };
 
   ASSERT_TRUE(wait_until([&] { return last_status() && last_status()->connected; }));
 
   fake->set_plugged(false);
   ASSERT_TRUE(wait_until([&] { return last_status() && !last_status()->connected; }));
-  EXPECT_EQ(last_status()->message.rfind("The Freezer controller stopped answering: ", 0), 0u)
-      << last_status()->message;
+  {
+    std::lock_guard lock{ mutex };
+    EXPECT_TRUE(std::any_of(received.begin(), received.end(), [](const StatusMsg& status) {
+      return !status.connected && status.message.rfind("The Freezer controller stopped answering: ", 0) == 0;
+    })) << "the unplug is told with its reason";
+  }
+  EXPECT_FALSE(last_status()->message.empty());
 
   fake->set_plugged(true);
   ASSERT_TRUE(wait_until([&] { return last_status() && last_status()->connected; }));
